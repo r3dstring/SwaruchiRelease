@@ -1,0 +1,7 @@
+{
+  "name": "quizforge",
+  "private": true,
+  "scripts": {
+    "setup": "cd server && npm install && cd ../client && npm install"
+  }
+}

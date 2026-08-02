@@ -1,0 +1,13 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base { * { -webkit-tap-highlight-color: transparent; } body { overflow-y: scroll; } }
+
+@layer components {
+  .btn-primary { @apply bg-lime-400 hover:bg-lime-500 active:bg-lime-600 text-white font-bold py-3 px-6 rounded-2xl transition-all duration-150 shadow-[0_4px_0_0_#3A8A01] hover:shadow-[0_2px_0_0_#3A8A01] hover:translate-y-[2px] active:shadow-none active:translate-y-[4px] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0 disabled:hover:shadow-[0_4px_0_0_#3A8A01]; }
+  .btn-secondary { @apply bg-white hover:bg-gray-50 text-gray-700 font-bold py-3 px-6 rounded-2xl border-2 border-gray-200 transition-all duration-150 shadow-[0_4px_0_0_#E5E7EB] hover:shadow-[0_2px_0_0_#E5E7EB] hover:translate-y-[2px] active:shadow-none active:translate-y-[4px]; }
+  .btn-danger { @apply bg-coral hover:bg-red-600 text-white font-bold py-3 px-6 rounded-2xl transition-all duration-150 shadow-[0_4px_0_0_#CC3B3B] hover:shadow-[0_2px_0_0_#CC3B3B] hover:translate-y-[2px]; }
+  .card { @apply bg-white rounded-2xl border-2 border-gray-100 p-6; }
+  .input-field { @apply w-full px-4 py-3 rounded-xl border-2 border-gray-200 bg-gray-50 focus:border-lime-400 focus:bg-white focus:outline-none transition-colors font-medium placeholder:text-gray-400; }
+}
