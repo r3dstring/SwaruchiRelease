@@ -1,3 +1,4 @@
+import zlib from 'zlib';
 import { all } from './db.js';
 
 const TOPIC_KEYWORDS = {
@@ -75,18 +76,35 @@ function weightedSample(items, n) {
   return result;
 }
 
+// Decompress a document's chunks, preferring the compressed bytea columns.
+// Falls back to legacy plain-text columns for documents uploaded before
+// gzip storage was introduced, so nothing breaks on already-uploaded PDFs.
+function getChunksForDoc(doc) {
+  if (doc.chunks_gz) {
+    try { return JSON.parse(zlib.gunzipSync(doc.chunks_gz).toString('utf8')); }
+    catch { /* fall through */ }
+  }
+  if (doc.chunks) {
+    try { return JSON.parse(doc.chunks); }
+    catch { /* fall through */ }
+  }
+  if (doc.text_gz) {
+    try { return chunkText(zlib.gunzipSync(doc.text_gz).toString('utf8')); }
+    catch { /* fall through */ }
+  }
+  return chunkText(doc.text_content || '');
+}
+
 // userId param removed — all users share the same knowledge base (admin-managed)
 export async function retrieveForTopic(topicLabel, { rotate = false, maxChars = 8000 } = {}) {
-  const docs = await all('SELECT id, filename, chunks, text_content FROM pdfs');
+  const docs = await all('SELECT id, filename, chunks, text_content, chunks_gz, text_gz FROM pdfs');
   if (docs.length === 0) return { context: '', docsReferenced: [] };
 
   const keywords = TOPIC_KEYWORDS[topicLabel] || [];
   const scored = [];
 
   for (const doc of docs) {
-    let chunks;
-    try { chunks = JSON.parse(doc.chunks || 'null'); } catch { chunks = null; }
-    if (!chunks) chunks = chunkText(doc.text_content || '');
+    const chunks = getChunksForDoc(doc);
     chunks.forEach((chunk, i) => {
       const score = scoreChunk(chunk, topicLabel, keywords);
       if (score > 0) scored.push({ docId: doc.id, filename: doc.filename, chunk, score, i });
@@ -114,9 +132,7 @@ export async function retrieveForTopic(topicLabel, { rotate = false, maxChars = 
   // Fallback: nothing matched — sample evenly from all docs
   if (final.length === 0) {
     for (const doc of docs) {
-      let chunks;
-      try { chunks = JSON.parse(doc.chunks || 'null'); } catch { chunks = null; }
-      if (!chunks) chunks = chunkText(doc.text_content || '');
+      const chunks = getChunksForDoc(doc);
       const step = Math.max(1, Math.floor(chunks.length / 3));
       for (let i = 0; i < chunks.length && chars < maxChars; i += step) {
         final.push({ docId: doc.id, filename: doc.filename, chunk: chunks[i] });

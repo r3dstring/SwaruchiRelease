@@ -41,6 +41,8 @@ export async function initDb() {
       filename TEXT NOT NULL,
       text_content TEXT,
       chunks TEXT,
+      text_gz BYTEA,
+      chunks_gz BYTEA,
       indexed INTEGER DEFAULT 0,
       page_count INTEGER DEFAULT 0,
       uploaded_at TIMESTAMP DEFAULT NOW()
@@ -93,6 +95,10 @@ export async function initDb() {
       reviewed_at TEXT
     );
   `);
+
+  // Migrations: add compressed-storage columns to tables created before this change
+  await pool.query(`ALTER TABLE pdfs ADD COLUMN IF NOT EXISTS text_gz BYTEA`);
+  await pool.query(`ALTER TABLE pdfs ADD COLUMN IF NOT EXISTS chunks_gz BYTEA`);
 
   // Promote ADMIN_EMAIL to admin if set
   const adminEmail = process.env.ADMIN_EMAIL;
