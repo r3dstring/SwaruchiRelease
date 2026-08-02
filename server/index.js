@@ -41,6 +41,20 @@ function detectProvider() {
 
 app.get('/api/health', (_, res) => res.json({ status: 'ok', provider: detectProvider() }));
 
+// 404 for any unmatched /api route — JSON instead of falling through
+app.use('/api', (req, res) => {
+  res.status(404).json({ error: `No route: ${req.method} ${req.originalUrl}` });
+});
+
+// Global error handler — MUST be defined last, with 4 args, so Express
+// routes uncaught errors here instead of its default HTML error page.
+// This is what was causing "Unexpected token '<'" on the frontend.
+app.use((err, req, res, next) => {
+  console.error('Unhandled error:', err);
+  if (res.headersSent) return next(err);
+  res.status(err.status || 500).json({ error: err.message || 'Internal server error' });
+});
+
 (async () => {
   try {
     await initDb();
