@@ -1,31 +1,28 @@
 import zlib from 'zlib';
-import { all } from './db.js';
+import { all, get } from './db.js';
 
-const TOPIC_KEYWORDS = {
-  'Crude-to-product basics / Petrochemical basics': ['crude','distillation','fraction','naphtha','gasoline','diesel','kerosene','petrochemical','polymer','olefin','aromatic','feedstock','boiling','refining'],
-  'Refinery economics & margins': ['margin','gross refining','grm','crack spread','netback','opex','capex','yield','economics','profit','cost','pricing','valuation'],
-  'Safety fundamentals': ['safety','hazard','ppe','permit','loto','lockout','confined space','hot work','msds','toxic','flammable','lel','h2s','risk assessment','psm'],
-  'Emergency response': ['emergency','evacuation','fire','alarm','esd','shutdown','mutual aid','incident command','firewater','deluge','assembly point','rescue'],
-  'CDU / VDU': ['cdu','vdu','crude distillation','vacuum distillation','atmospheric','desalter','preheat','furnace','overhead','sidecut','residue','stripping','flash zone'],
-  'DHDT / NHT': ['dhdt','nht','hydrotreat','hydrodesulfurization','hds','naphtha hydrotreater','diesel hydrotreater','sulfur','reactor','catalyst','hydrogen partial','wabt','sour'],
-  'DCU': ['dcu','coker','delayed coking','coke drum','decoking','cutting','furnace','thermal cracking','vgo','anode','petcoke','drum switching'],
-  'FCC / RFCC': ['fcc','rfcc','catalytic cracking','regenerator','riser','catalyst circulation','slurry','cyclone','e-cat','fluidized','main fractionator','afterburn'],
-  'HCU': ['hcu','hydrocracker','hydrocracking','conversion','recycle gas','makeup hydrogen','quench','exotherm','temperature runaway','catalyst bed','hpna'],
-  'Hydrogen Generation': ['hydrogen generation','smr','steam methane','reformer','psa','shift converter','syngas','hgu','methanation','steam carbon ratio','reforming'],
-  'Sulphur Recovery': ['sru','sulphur recovery','sulfur recovery','claus','tail gas','amine','acid gas','h2s','so2','incinerator','degassing','sulfur pit'],
-  'Utilities & Offsites': ['utility','offsite','boiler','steam','cooling water','instrument air','nitrogen','flare','effluent','etp','demineralized','dm water','power plant','tankage','prds','bfw','condensate'],
-  'Petrochemical Units': ['polypropylene','polyethylene','polymerization','extruder','pellet','propylene','ethylene','monomer','catalyst injection','reactor bed','degassing','granule'],
-  'Operating parameters & limits': ['operating parameter','operating limit','operating envelope','design limit','alarm limit','trip point','setpoint','normal operating','safe operating','iow','integrity operating window'],
-  'Common upsets & responses': ['upset','deviation','high level','low flow','trip','response','corrective action','abnormal','excursion','surge','carryover','foaming','flooding'],
-  'Startup / shutdown sequences': ['startup','shutdown','commissioning','purge','inertization','warm up','lineup','depressurization','cool down','sequence','pre-startup','pssr','first fill'],
-  'Incident insights (from RCFAs)': ['incident','rcfa','root cause','failure analysis','investigation','lesson learned','near miss','accident','why analysis','contributing factor'],
-  'Motor control & protection': ['motor','mcc','starter','overload','relay protection','thermal overload','contactor','dol','star delta','vfd','soft starter','winding','insulation resistance'],
-  'Switchgear & breakers': ['switchgear','breaker','circuit breaker','vcb','acb','busbar','isolator','protection relay','arc flash','racking','tripping','closing coil','interlock'],
-  'Power distribution': ['power distribution','transformer','substation','feeder','switchyard','voltage level','earthing','grounding','ups','dg set','emergency power','load shedding','single line diagram'],
-  'Control loops & tuning': ['control loop','pid','tuning','proportional','integral','derivative','setpoint','cascade','feedforward','controller','gain','oscillation','dead time','process variable'],
-  'Safety instrumented systems (SIS/SIL)': ['sis','sil','safety instrumented','sif','interlock','trip','voting','2oo3','proof test','esd','logic solver','final element','pfd','lopa','hazop'],
-  'Analyzers & metering': ['analyzer','metering','gc','gas chromatograph','oxygen analyzer','ph','conductivity','flow meter','custody transfer','orifice','coriolis','ultrasonic','calibration','sample conditioning','swas'],
-};
+// Keywords now live in the topics table (admin-editable via /api/topics).
+// Small in-process cache so we're not hitting the DB on every single chunk
+// score during a generation call — refreshed every 60s, which is more than
+// fast enough for admin edits to take effect quickly without adding load.
+let keywordCache = new Map();
+let keywordCacheAt = 0;
+const KEYWORD_CACHE_TTL = 60_000;
+
+async function getKeywordsForTopic(topicLabel) {
+  if (!topicLabel) return [];
+  const now = Date.now();
+  if (now - keywordCacheAt > KEYWORD_CACHE_TTL) {
+    const rows = await all('SELECT label, keywords FROM topics WHERE parent_id IS NOT NULL');
+    keywordCache = new Map(rows.map(r => {
+      let kw = [];
+      try { kw = JSON.parse(r.keywords || '[]'); } catch { /* leave empty */ }
+      return [r.label, kw];
+    }));
+    keywordCacheAt = now;
+  }
+  return keywordCache.get(topicLabel) || [];
+}
 
 const GENERIC = ['pressure','temperature','flow','level','valve','pump','compressor','exchanger','pipe','process'];
 
@@ -100,7 +97,7 @@ export async function retrieveForTopic(topicLabel, { rotate = false, maxChars = 
   const docs = await all('SELECT id, filename, chunks, text_content, chunks_gz, text_gz FROM pdfs');
   if (docs.length === 0) return { context: '', docsReferenced: [] };
 
-  const keywords = TOPIC_KEYWORDS[topicLabel] || [];
+  const keywords = await getKeywordsForTopic(topicLabel);
   const scored = [];
 
   for (const doc of docs) {

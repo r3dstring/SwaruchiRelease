@@ -4,7 +4,9 @@ import { get } from '../db.js';
 const JWT_SECRET = process.env.JWT_SECRET || 'quizforge-dev-secret-change-me';
 
 export function generateToken(user) {
-  return jwt.sign({ id: user.id, username: user.username, role: user.role || 'user' }, JWT_SECRET, { expiresIn: '7d' });
+  // No expiresIn — tokens never expire. Sessions stay logged in indefinitely
+  // until the user explicitly logs out (which just clears the local token).
+  return jwt.sign({ id: user.id, username: user.username, role: user.role || 'user' }, JWT_SECRET);
 }
 
 export function authMiddleware(req, res, next) {

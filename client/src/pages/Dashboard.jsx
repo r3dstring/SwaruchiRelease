@@ -1,17 +1,17 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAuth, useIsAdmin } from '../context/AuthContext';
+import { useTopics } from '../context/TopicsContext';
 import { api } from '../api';
-import { TOPIC_TREE } from '../topicTree';
 
 const LEVEL_TITLES = ['','Novice','Learner','Scholar','Expert','Sage','Wizard','Legend','Titan','Mythic','Apex'];
 function xpForLevel(l) { let t=0; for(let i=1;i<l;i++) t+=100+50*i; return t; }
 function xpToNext(xp,level) { const c=xpForLevel(level),n=xpForLevel(level+1),p=xp-c,needed=n-c; return {progress:p,needed,pct:Math.min(100,Math.round((p/needed)*100))}; }
 
-function TopicTreePicker({ selected, onSelect }) {
+function TopicTreePicker({ topics, selected, onSelect }) {
   const [expanded, setExpanded] = useState({});
   return (
     <div className="space-y-1 max-h-[240px] overflow-y-auto pr-1 -mr-1">
-      {TOPIC_TREE.map(branch => {
+      {topics.map(branch => {
         const isOpen = expanded[branch.id];
         const hasSel = branch.children.some(c => c.id === selected);
         return (
@@ -54,6 +54,7 @@ function GrowthChart({ data }) {
 export default function Dashboard({ onStartQuiz }) {
   const { user } = useAuth();
   const isAdmin = useIsAdmin();
+  const { topics } = useTopics();
   const [pdfs, setPdfs] = useState([]);
   const [history, setHistory] = useState([]);
   const [recs, setRecs] = useState(null);
@@ -88,7 +89,7 @@ export default function Dashboard({ onStartQuiz }) {
   const openSettings = (presetLabel=null) => {
     setSelTopicId(null); setSelTopicLabel(''); setSelTopicParent(''); setConsequenceMode(false);
     if (presetLabel) {
-      for (const b of TOPIC_TREE) { const l=b.children.find(c=>c.label===presetLabel); if(l){setSelTopicId(l.id);setSelTopicLabel(l.label);setSelTopicParent(b.label);break;} }
+      for (const b of topics) { const l=b.children.find(c=>c.label===presetLabel); if(l){setSelTopicId(l.id);setSelTopicLabel(l.label);setSelTopicParent(b.label);break;} }
     }
     setShowSettings(true);
   };
@@ -113,7 +114,7 @@ export default function Dashboard({ onStartQuiz }) {
             </div>
             <div className="p-6 pt-4 overflow-y-auto flex-1">
               <label className="block text-sm font-semibold text-gray-600 mb-2">Select Topic <span className="text-coral">*</span></label>
-              <TopicTreePicker selected={selTopicId} onSelect={(id,label,parent)=>{setSelTopicId(id);setSelTopicLabel(label);setSelTopicParent(parent);}}/>
+              <TopicTreePicker topics={topics} selected={selTopicId} onSelect={(id,label,parent)=>{setSelTopicId(id);setSelTopicLabel(label);setSelTopicParent(parent);}}/>
               {selTopicId && <div className="mt-3 flex items-center gap-2 bg-lime-400/10 px-3 py-2 rounded-xl"><span className="text-sm">🎯</span><span className="text-sm font-semibold text-lime-700 truncate">{selTopicParent} → {selTopicLabel}</span></div>}
               <div className="h-px bg-gray-100 my-5"/>
               <label className="block text-sm font-semibold text-gray-600 mb-2">Questions</label>

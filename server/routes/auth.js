@@ -43,4 +43,25 @@ router.get('/me', authMiddleware, async (req, res) => {
   res.json(user);
 });
 
+// Master-key password reset. No email verification loop, no token —
+// anyone who knows the shared master key can reset any account's password.
+// This is deliberately simple for a small internal test group, NOT a
+// substitute for real per-user password reset (email link, etc) in production.
+// Change the key via MASTER_RESET_KEY env var; falls back to a default if unset.
+router.post('/reset-password', async (req, res) => {
+  const { email, masterKey, newPassword } = req.body;
+  if (!email || !masterKey || !newPassword) return res.status(400).json({ error: 'email, masterKey, and newPassword are required' });
+  if (newPassword.length < 4) return res.status(400).json({ error: 'Password too short' });
+
+  const expectedKey = process.env.MASTER_RESET_KEY || 'abacusaloha';
+  if (masterKey !== expectedKey) return res.status(403).json({ error: 'Incorrect master key' });
+
+  const user = await get('SELECT id FROM users WHERE email = ?', [email.trim().toLowerCase()]);
+  if (!user) return res.status(404).json({ error: 'No account found with that email' });
+
+  const hash = bcrypt.hashSync(newPassword, 10);
+  await run('UPDATE users SET password_hash = ? WHERE id = ?', [hash, user.id]);
+  res.json({ ok: true });
+});
+
 export default router;

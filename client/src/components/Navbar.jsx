@@ -12,13 +12,14 @@ export default function Navbar({ onNavigate, currentPage }) {
       <div className="max-w-5xl mx-auto px-4 h-16 flex items-center justify-between">
         <button onClick={() => onNavigate('dashboard')} className="flex items-center gap-2 group">
           <span className="text-2xl">🧠</span>
-          <span className="font-display font-900 text-xl text-gray-800 group-hover:text-lime-500 transition-colors">Swaruchi</span>
+          <span className="font-display font-900 text-xl text-gray-800 group-hover:text-lime-500 transition-colors">QuizForge</span>
         </button>
         <div className="flex items-center gap-2">
           {link('dashboard', 'Home')}
-          {link('knowledge', '🗺️ Map')}
+          {link('knowledge', '🔥 Heatmap')}
           {link('leaderboard', '🏆 Ranks')}
           {isAdmin && link('flags', '🚩 Flags')}
+          {isAdmin && link('topics', '🗂️ Topics')}
           <div className="h-6 w-px bg-gray-200 mx-1" />
           <div className="flex items-center gap-1.5 bg-golden/10 px-3 py-1.5 rounded-xl"><span className="text-sm">⚡</span><span className="text-sm font-bold text-amber-700">{user?.xp||0}</span></div>
           {(user?.streak||0) > 0 && <div className="flex items-center gap-1.5 bg-orange-50 px-3 py-1.5 rounded-xl"><span className="text-sm">🔥</span><span className="text-sm font-bold text-orange-600">{user.streak}</span></div>}

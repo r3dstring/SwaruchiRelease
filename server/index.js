@@ -4,6 +4,7 @@ import { initDb } from './db.js';
 import authRoutes from './routes/auth.js';
 import pdfRoutes from './routes/pdf.js';
 import quizRoutes from './routes/quiz.js';
+import topicsRoutes from './routes/topics.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -31,6 +32,7 @@ app.use(express.json({ limit: '10mb' }));
 app.use('/api/auth', authRoutes);
 app.use('/api/pdf', pdfRoutes);
 app.use('/api/quiz', quizRoutes);
+app.use('/api/topics', topicsRoutes);
 
 function detectProvider() {
   if (process.env.CEREBRAS_API_KEY) return 'Cerebras';

@@ -16,6 +16,7 @@ export const api = {
   signup: (body) => request('/auth/signup', { method: 'POST', body }),
   login: (body) => request('/auth/login', { method: 'POST', body }),
   me: () => request('/auth/me'),
+  resetPassword: (body) => request('/auth/reset-password', { method: 'POST', body }),
 
   uploadPdf: (file) => { const fd = new FormData(); fd.append('pdf', file); return request('/pdf/upload', { method: 'POST', body: fd }); },
   listPdfs: () => request('/pdf/list'),
@@ -32,4 +33,10 @@ export const api = {
 
   adminFlags: (status='open') => request(`/quiz/admin/flags?status=${status}`),
   adminUpdateFlag: (id, status) => request(`/quiz/admin/flags/${id}`, { method: 'PATCH', body: { status } }),
+
+  getTopics: () => request('/topics'),
+  adminCreateBranch: (data) => request('/topics/admin/branch', { method: 'POST', body: data }),
+  adminCreateLeaf: (data) => request('/topics/admin/leaf', { method: 'POST', body: data }),
+  adminUpdateTopic: (id, data) => request(`/topics/admin/${id}`, { method: 'PATCH', body: data }),
+  adminDeleteTopic: (id) => request(`/topics/admin/${id}`, { method: 'DELETE' }),
 };

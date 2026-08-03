@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { TopicsProvider } from './context/TopicsContext';
 import Navbar from './components/Navbar';
 import Auth from './pages/Auth';
 import Dashboard from './pages/Dashboard';
@@ -8,6 +9,7 @@ import Results from './pages/Results';
 import Leaderboard from './pages/Leaderboard';
 import KnowledgeMap from './pages/KnowledgeMap';
 import FlaggedQuestions from './pages/FlaggedQuestions';
+import TopicManager from './pages/TopicManager';
 
 function AppInner() {
   const { user, loading, refreshUser } = useAuth();
@@ -23,15 +25,18 @@ function AppInner() {
   const handleBack = () => { setPage('dashboard'); setQuizSettings(null); setQuizResult(null); refreshUser(); };
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {page!=='quiz' && <Navbar onNavigate={setPage} currentPage={page}/>}
-      {page==='dashboard' && <Dashboard onStartQuiz={handleStartQuiz}/>}
-      {page==='quiz' && quizSettings && <Quiz settings={quizSettings} onFinish={handleQuizFinish} onBack={handleBack}/>}
-      {page==='results' && quizResult && <Results result={quizResult} onBack={handleBack}/>}
-      {page==='leaderboard' && <Leaderboard/>}
-      {page==='knowledge' && <KnowledgeMap/>}
-      {page==='flags' && <FlaggedQuestions/>}
-    </div>
+    <TopicsProvider>
+      <div className="min-h-screen bg-gray-50">
+        {page!=='quiz' && <Navbar onNavigate={setPage} currentPage={page}/>}
+        {page==='dashboard' && <Dashboard onStartQuiz={handleStartQuiz}/>}
+        {page==='quiz' && quizSettings && <Quiz settings={quizSettings} onFinish={handleQuizFinish} onBack={handleBack}/>}
+        {page==='results' && quizResult && <Results result={quizResult} onBack={handleBack}/>}
+        {page==='leaderboard' && <Leaderboard/>}
+        {page==='knowledge' && <KnowledgeMap/>}
+        {page==='flags' && <FlaggedQuestions/>}
+        {page==='topics' && <TopicManager/>}
+      </div>
+    </TopicsProvider>
   );
 }
 
