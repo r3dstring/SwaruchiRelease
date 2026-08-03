@@ -17,7 +17,7 @@ export default function Auth() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-owl-50 to-white flex flex-col items-center justify-center px-4">
       <div className="text-center mb-8 animate-slide-up">
-        <div className="text-6xl mb-4">🧠</div>
+        <div className="text-6xl mb-4">🧠 </div>
         <h1 className="font-display font-900 text-4xl md:text-5xl text-gray-800 mb-3">Swaruchi<span className="text-lime-400"></span></h1>
         <p className="text-gray-500 text-lg max-w-sm mx-auto">Upload any PDF. Learn it through AI-powered quizzes. Level up.</p>
       </div>
