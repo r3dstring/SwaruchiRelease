@@ -103,6 +103,31 @@ export async function initDb() {
       sort_order INTEGER DEFAULT 0,
       created_at TIMESTAMP DEFAULT NOW()
     );
+    CREATE TABLE IF NOT EXISTS quiz_sessions (
+      id SERIAL PRIMARY KEY,
+      admin_id INTEGER NOT NULL REFERENCES users(id),
+      session_name TEXT NOT NULL,
+      pdf_id INTEGER NOT NULL REFERENCES pdfs(id),
+      join_code TEXT UNIQUE NOT NULL,
+      count INTEGER DEFAULT 10,
+      difficulty TEXT DEFAULT 'medium',
+      questions TEXT NOT NULL,
+      status TEXT DEFAULT 'open',
+      created_at TIMESTAMP DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS session_participants (
+      id SERIAL PRIMARY KEY,
+      session_id INTEGER NOT NULL REFERENCES quiz_sessions(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      employee_id TEXT NOT NULL,
+      grade TEXT NOT NULL,
+      score INTEGER,
+      total INTEGER,
+      results TEXT,
+      joined_at TIMESTAMP DEFAULT NOW(),
+      completed_at TIMESTAMP,
+      UNIQUE(session_id, employee_id)
+    );
   `);
 
   // Migrations: add compressed-storage columns to tables created before this change

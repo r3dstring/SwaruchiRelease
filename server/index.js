@@ -5,6 +5,7 @@ import authRoutes from './routes/auth.js';
 import pdfRoutes from './routes/pdf.js';
 import quizRoutes from './routes/quiz.js';
 import topicsRoutes from './routes/topics.js';
+import sessionsRoutes from './routes/sessions.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -33,6 +34,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/pdf', pdfRoutes);
 app.use('/api/quiz', quizRoutes);
 app.use('/api/topics', topicsRoutes);
+app.use('/api/sessions', sessionsRoutes);
 
 function detectProviders() {
   const list = [];

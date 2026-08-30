@@ -39,4 +39,16 @@ export const api = {
   adminCreateLeaf: (data) => request('/topics/admin/leaf', { method: 'POST', body: data }),
   adminUpdateTopic: (id, data) => request(`/topics/admin/${id}`, { method: 'PATCH', body: data }),
   adminDeleteTopic: (id) => request(`/topics/admin/${id}`, { method: 'DELETE' }),
+
+  // Custom Quiz sessions — admin management (requires login)
+  createSession: (data) => request('/sessions', { method: 'POST', body: data }),
+  listSessions: () => request('/sessions'),
+  getSession: (id) => request(`/sessions/${id}`),
+  updateSessionStatus: (id, status) => request(`/sessions/${id}`, { method: 'PATCH', body: { status } }),
+  deleteSession: (id) => request(`/sessions/${id}`, { method: 'DELETE' }),
+
+  // Custom Quiz sessions — public participant flow (no login)
+  lookupSessionCode: (code) => request(`/sessions/public/lookup/${code}`),
+  joinSession: (data) => request('/sessions/public/join', { method: 'POST', body: data }),
+  submitSession: (data) => request('/sessions/public/submit', { method: 'POST', body: data }),
 };

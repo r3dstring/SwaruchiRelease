@@ -10,6 +10,8 @@ import Leaderboard from './pages/Leaderboard';
 import KnowledgeMap from './pages/KnowledgeMap';
 import FlaggedQuestions from './pages/FlaggedQuestions';
 import TopicManager from './pages/TopicManager';
+import JoinQuiz from './pages/JoinQuiz';
+import CustomQuizAdmin from './pages/CustomQuizAdmin';
 
 function AppInner() {
   const { user, loading, refreshUser } = useAuth();
@@ -35,9 +37,20 @@ function AppInner() {
         {page==='knowledge' && <KnowledgeMap/>}
         {page==='flags' && <FlaggedQuestions/>}
         {page==='topics' && <TopicManager/>}
+        {page==='custom-quiz' && <CustomQuizAdmin/>}
       </div>
     </TopicsProvider>
   );
 }
 
-export default function App() { return <AuthProvider><AppInner/></AuthProvider>; }
+export default function App() {
+  // Public entry point - anyone with a join code reaches this WITHOUT logging in.
+  // Checked before AuthProvider/the login gate on purpose: employees taking a
+  // one-off assessment shouldn't need an account.
+  const params = new URLSearchParams(window.location.search);
+  const isJoinRoute = window.location.pathname === '/join' || params.has('join');
+
+  if (isJoinRoute) return <JoinQuiz />;
+
+  return <AuthProvider><AppInner/></AuthProvider>;
+}

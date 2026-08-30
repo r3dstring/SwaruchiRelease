@@ -20,6 +20,7 @@ export default function Navbar({ onNavigate, currentPage }) {
           {link('leaderboard', '🏆 Ranks')}
           {isAdmin && link('flags', '🚩 Flags')}
           {isAdmin && link('topics', '🗂️ Topics')}
+          {isAdmin && link('custom-quiz', '🎯 Custom Quiz')}
           <div className="h-6 w-px bg-gray-200 mx-1" />
           <div className="flex items-center gap-1.5 bg-golden/10 px-3 py-1.5 rounded-xl"><span className="text-sm">⚡</span><span className="text-sm font-bold text-amber-700">{user?.xp||0}</span></div>
           {(user?.streak||0) > 0 && <div className="flex items-center gap-1.5 bg-orange-50 px-3 py-1.5 rounded-xl"><span className="text-sm">🔥</span><span className="text-sm font-bold text-orange-600">{user.streak}</span></div>}
