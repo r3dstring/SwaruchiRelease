@@ -93,7 +93,7 @@ function getChunksForDoc(doc) {
 }
 
 // userId param removed — all users share the same knowledge base (admin-managed)
-export async function retrieveForTopic(topicLabel, { rotate = false, maxChars = 8000 } = {}) {
+export async function retrieveForTopic(topicLabel, { rotate = false, maxChars = 5500 } = {}) {
   const docs = await all('SELECT id, filename, chunks, text_content, chunks_gz, text_gz FROM pdfs');
   if (docs.length === 0) return { context: '', docsReferenced: [] };
 

@@ -34,14 +34,16 @@ app.use('/api/pdf', pdfRoutes);
 app.use('/api/quiz', quizRoutes);
 app.use('/api/topics', topicsRoutes);
 
-function detectProvider() {
-  if (process.env.CEREBRAS_API_KEY) return 'Cerebras';
-  if (process.env.GEMINI_API_KEY) return process.env.GEMINI_API_KEY.startsWith('gsk_') ? 'Groq' : 'Gemini';
-  if (process.env.ANTHROPIC_API_KEY) return 'Anthropic';
-  return null;
+function detectProviders() {
+  const list = [];
+  if (process.env.CEREBRAS_API_KEY) list.push('Cerebras');
+  if (process.env.OPENROUTER_API_KEY) list.push('OpenRouter');
+  if (process.env.GEMINI_API_KEY) list.push(process.env.GEMINI_API_KEY.startsWith('gsk_') ? 'Groq' : 'Gemini');
+  if (process.env.ANTHROPIC_API_KEY) list.push('Anthropic');
+  return list;
 }
 
-app.get('/api/health', (_, res) => res.json({ status: 'ok', provider: detectProvider() }));
+app.get('/api/health', (_, res) => res.json({ status: 'ok', providers: detectProviders() }));
 
 // 404 for any unmatched /api route — JSON instead of falling through
 app.use('/api', (req, res) => {
@@ -61,11 +63,11 @@ app.use((err, req, res, next) => {
   try {
     await initDb();
     app.listen(PORT, () => {
-      const provider = detectProvider();
+      const providers = detectProviders();
       console.log(`\n  QuizForge API running on port ${PORT}`);
-      console.log(`  AI provider: ${provider || 'NONE (mock questions)'}`);
+      console.log(`  AI providers (failover order): ${providers.length ? providers.join(' -> ') : 'NONE (mock questions)'}`);
       console.log(`  Admin: ${process.env.ADMIN_EMAIL || 'first signup becomes admin'}`);
-      if (!provider) console.log(`  Set an AI key env var to enable real questions\n`);
+      if (!providers.length) console.log(`  Set an AI key env var to enable real questions\n`);
       else console.log('');
     });
   } catch (e) {

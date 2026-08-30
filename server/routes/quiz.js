@@ -6,7 +6,7 @@ import { retrieveForTopic } from '../retrieval.js';
 const router = Router();
 const XP_PER_CORRECT = 10;
 const XP_BONUS_PERFECT = 25;
-const HISTORY_EXCLUSION_LIMIT = 20;
+const HISTORY_EXCLUSION_LIMIT = 12; // trimmed from 20 — less prompt bulk per call, stays effective at avoiding repeats
 const HISTORY_CAP = 50;
 
 function calcLevel(xp) {
@@ -54,35 +54,60 @@ function deduplicateAgainstHistory(questions, history) {
   return questions.filter(q => { const n = normalizeQ(q.question); return !history.some(h => similarity(n, h) > 0.75); });
 }
 
-function getAIProvider() {
-  if (process.env.CEREBRAS_API_KEY) return { name: 'Cerebras', key: process.env.CEREBRAS_API_KEY, type: 'cerebras' };
+// Returns EVERY configured provider, in priority order — not just the first one.
+// generateQuestions() tries them in sequence, so if one is rate-limited or down,
+// it automatically falls through to the next instead of dropping to mock questions.
+function getAllProviders() {
+  const providers = [];
+  if (process.env.CEREBRAS_API_KEY) providers.push({ name: 'Cerebras', key: process.env.CEREBRAS_API_KEY, type: 'cerebras' });
+  if (process.env.OPENROUTER_API_KEY) providers.push({ name: 'OpenRouter', key: process.env.OPENROUTER_API_KEY, type: 'openrouter' });
   if (process.env.GEMINI_API_KEY) {
     const k = process.env.GEMINI_API_KEY;
-    return k.startsWith('gsk_') ? { name: 'Groq', key: k, type: 'groq' } : { name: 'Gemini', key: k, type: 'gemini' };
+    providers.push(k.startsWith('gsk_') ? { name: 'Groq', key: k, type: 'groq' } : { name: 'Gemini', key: k, type: 'gemini' });
   }
-  if (process.env.ANTHROPIC_API_KEY) return { name: 'Anthropic', key: process.env.ANTHROPIC_API_KEY, type: 'anthropic' };
-  return null;
+  if (process.env.ANTHROPIC_API_KEY) providers.push({ name: 'Anthropic', key: process.env.ANTHROPIC_API_KEY, type: 'anthropic' });
+  return providers;
 }
 
 async function callLLM(prompt, provider) {
   if (provider.type === 'cerebras') {
-    const r = await fetch('https://api.cerebras.ai/v1/chat/completions', { method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${provider.key}`}, body: JSON.stringify({ model:'llama-3.3-70b', messages:[{role:'user',content:prompt}], temperature:0.7, max_tokens:3500 }) });
-    if (!r.ok) { console.error('Cerebras error:', r.status, await r.text()); return null; }
+    const r = await fetch('https://api.cerebras.ai/v1/chat/completions', { method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${provider.key}`}, body: JSON.stringify({ model:'llama-3.3-70b', messages:[{role:'user',content:prompt}], temperature:0.7, max_tokens:3000 }) });
+    if (!r.ok) { console.error(`Cerebras error (${r.status}):`, await r.text()); return null; }
     return (await r.json()).choices?.[0]?.message?.content || '';
   }
   if (provider.type === 'groq') {
-    const r = await fetch('https://api.groq.com/openai/v1/chat/completions', { method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${provider.key}`}, body: JSON.stringify({ model:'llama-3.3-70b-versatile', messages:[{role:'user',content:prompt}], temperature:0.7, max_tokens:3500 }) });
-    if (!r.ok) { console.error('Groq error:', r.status, await r.text()); return null; }
+    // llama-3.3-70b-versatile was deprecated by Groq (shut down Aug 16, 2026).
+    // openai/gpt-oss-120b is Groq's official recommended replacement, and also
+    // carries a higher free-tier daily token allowance.
+    const r = await fetch('https://api.groq.com/openai/v1/chat/completions', { method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${provider.key}`}, body: JSON.stringify({ model:'openai/gpt-oss-120b', messages:[{role:'user',content:prompt}], temperature:0.7, max_tokens:3000 }) });
+    if (!r.ok) { console.error(`Groq error (${r.status}):`, await r.text()); return null; }
+    return (await r.json()).choices?.[0]?.message?.content || '';
+  }
+  if (provider.type === 'openrouter') {
+    // Model rotation on OpenRouter's free tier is frequent — "openrouter/free" is
+    // their own auto-router that always resolves to whatever free model is
+    // currently live, instead of hardcoding a specific model ID that can vanish.
+    const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${provider.key}`,
+        'HTTP-Referer': 'https://quizforge.app',
+        'X-Title': 'QuizForge',
+      },
+      body: JSON.stringify({ model: 'openrouter/free', messages: [{ role: 'user', content: prompt }], temperature: 0.7, max_tokens: 3000 }),
+    });
+    if (!r.ok) { console.error(`OpenRouter error (${r.status}):`, await r.text()); return null; }
     return (await r.json()).choices?.[0]?.message?.content || '';
   }
   if (provider.type === 'gemini') {
-    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${provider.key}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ contents:[{parts:[{text:prompt}]}], generationConfig:{temperature:0.7,maxOutputTokens:3500} }) });
-    if (!r.ok) { console.error('Gemini error:', r.status, await r.text()); return null; }
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${provider.key}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ contents:[{parts:[{text:prompt}]}], generationConfig:{temperature:0.7,maxOutputTokens:3000} }) });
+    if (!r.ok) { console.error(`Gemini error (${r.status}):`, await r.text()); return null; }
     return (await r.json()).candidates?.[0]?.content?.parts?.[0]?.text || '';
   }
   if (provider.type === 'anthropic') {
-    const r = await fetch('https://api.anthropic.com/v1/messages', { method:'POST', headers:{'Content-Type':'application/json','x-api-key':provider.key,'anthropic-version':'2023-06-01'}, body: JSON.stringify({ model:'claude-sonnet-4-6', max_tokens:3500, messages:[{role:'user',content:prompt}] }) });
-    if (!r.ok) { console.error('Anthropic error:', r.status); return null; }
+    const r = await fetch('https://api.anthropic.com/v1/messages', { method:'POST', headers:{'Content-Type':'application/json','x-api-key':provider.key,'anthropic-version':'2023-06-01'}, body: JSON.stringify({ model:'claude-sonnet-4-6', max_tokens:3000, messages:[{role:'user',content:prompt}] }) });
+    if (!r.ok) { console.error(`Anthropic error (${r.status}):`, await r.text()); return null; }
     return (await r.json()).content?.[0]?.text || '';
   }
   return null;
@@ -142,31 +167,39 @@ ${context}`;
 }
 
 async function generateQuestions(userId, { count, difficulty, topic, topicParent, consequenceMode }) {
-  const provider = getAIProvider();
+  const providers = getAllProviders();
   const { context, docsReferenced } = await retrieveForTopic(topic || '', { rotate: true });
   if (!context) return { questions: null, docsReferenced: [] };
-  if (!provider) return { questions: null, docsReferenced };
+  if (providers.length === 0) return { questions: null, docsReferenced };
 
   const adaptive = await getAdaptiveDirective(userId, topic);
   const previousQuestions = await getRecentQuestions(userId, topic);
   const prompt = buildPrompt({ context, count, difficulty, topic, topicParent, consequenceMode, adaptive, previousQuestions });
 
-  try {
-    const responseText = await callLLM(prompt, provider);
-    if (!responseText) return { questions: null, docsReferenced };
-    const match = responseText.match(/\[[\s\S]*\]/);
-    if (!match) return { questions: null, docsReferenced };
-    let questions = JSON.parse(match[0]);
-    if (!Array.isArray(questions)) return { questions: null, docsReferenced };
-    questions = questions.filter(q => q.type && q.question && q.answer && (q.type === 'fitb' || (Array.isArray(q.options) && q.options.length >= 2)));
-    const deduped = deduplicateAgainstHistory(questions, previousQuestions);
-    const final = deduped.slice(0, count);
-    console.log(`[${provider.name}] ${final.length}/${count} questions | topic: ${topic||'general'} | excluded: ${previousQuestions.length} | docs: ${docsReferenced.length}`);
-    return { questions: final.length > 0 ? final : null, docsReferenced };
-  } catch (e) {
-    console.error('Generation failed:', e.message);
-    return { questions: null, docsReferenced };
+  // Try each configured provider in order. If one fails (rate limit, outage,
+  // bad response), automatically move to the next instead of falling straight
+  // to mock questions — this is what makes a single provider going down non-fatal.
+  for (const provider of providers) {
+    try {
+      const responseText = await callLLM(prompt, provider);
+      if (!responseText) { console.log(`[${provider.name}] no response, trying next provider...`); continue; }
+      const match = responseText.match(/\[[\s\S]*\]/);
+      if (!match) { console.log(`[${provider.name}] no JSON array in response, trying next provider...`); continue; }
+      let questions = JSON.parse(match[0]);
+      if (!Array.isArray(questions)) { continue; }
+      questions = questions.filter(q => q.type && q.question && q.answer && (q.type === 'fitb' || (Array.isArray(q.options) && q.options.length >= 2)));
+      const deduped = deduplicateAgainstHistory(questions, previousQuestions);
+      const final = deduped.slice(0, count);
+      if (final.length === 0) { console.log(`[${provider.name}] all questions filtered out, trying next provider...`); continue; }
+      console.log(`[${provider.name}] ${final.length}/${count} questions | topic: ${topic||'general'} | excluded: ${previousQuestions.length} | docs: ${docsReferenced.length}`);
+      return { questions: final, docsReferenced };
+    } catch (e) {
+      console.error(`[${provider.name}] threw an error, trying next provider:`, e.message);
+    }
   }
+
+  console.log('All configured AI providers failed — falling back to mock questions');
+  return { questions: null, docsReferenced };
 }
 
 function generateMockQuestions(topic) {
