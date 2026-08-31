@@ -26,7 +26,7 @@ export default function Navbar({ onNavigate, currentPage }) {
 
   return (
     <nav className="bg-white border-b border-gray-200 sticky top-0 z-50">
-      <div className="max-w-5xl mx-auto px-4 h-16 flex items-center justify-between">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
         {/* Brand */}
         <button onClick={() => go('dashboard')} className="flex items-center gap-2.5 shrink-0">
           <div className="w-8 h-8 rounded-lg bg-lime-500 flex items-center justify-center">
@@ -36,37 +36,41 @@ export default function Navbar({ onNavigate, currentPage }) {
           <span className="hidden sm:inline-block text-[10px] font-bold text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded tracking-wide">HRRL</span>
         </button>
 
-        {/* Desktop nav */}
-        <div className="hidden md:flex items-center gap-1">
+        {/* Desktop nav — scrollable fallback so labels never wrap even on
+            narrower desktop widths; the stats/profile cluster stays fixed. */}
+        <div className="hidden md:flex items-center gap-1 overflow-x-auto flex-1 min-w-0" style={{ scrollbarWidth: 'none' }}>
           {navItems.map(item => {
             const Icon = item.icon;
             return (
               <button key={item.page} onClick={() => go(item.page)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${currentPage === item.page ? 'bg-lime-50 text-lime-700' : 'text-gray-500 hover:text-gray-800 hover:bg-gray-50'}`}>
-                <Icon size={16} strokeWidth={2} />
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap shrink-0 transition-colors ${currentPage === item.page ? 'bg-lime-50 text-lime-700' : 'text-gray-500 hover:text-gray-800 hover:bg-gray-50'}`}>
+                <Icon size={16} strokeWidth={2} className="shrink-0" />
                 {item.label}
               </button>
             );
           })}
 
-          <button onClick={joinQuiz} className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-sm font-semibold text-white bg-lime-500 hover:bg-lime-600 transition-colors">
-            <QrCode size={15} strokeWidth={2} />
+          <button onClick={joinQuiz} className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-sm font-semibold text-white bg-lime-500 hover:bg-lime-600 whitespace-nowrap shrink-0 transition-colors">
+            <QrCode size={15} strokeWidth={2} className="shrink-0" />
             Join a Quiz
           </button>
+        </div>
 
-          <div className="h-6 w-px bg-gray-200 mx-2" />
-          <div className="flex items-center gap-1.5 bg-amber-50 px-3 py-1.5 rounded-lg">
-            <Zap size={14} className="text-amber-600" strokeWidth={2.5} />
+        {/* Fixed right cluster — always fully visible, never scrolls or wraps */}
+        <div className="hidden md:flex items-center gap-1 shrink-0">
+          <div className="h-6 w-px bg-gray-200 mx-2 shrink-0" />
+          <div className="flex items-center gap-1.5 bg-amber-50 px-3 py-1.5 rounded-lg whitespace-nowrap shrink-0">
+            <Zap size={14} className="text-amber-600 shrink-0" strokeWidth={2.5} />
             <span className="text-sm font-bold text-amber-700">{user?.xp || 0}</span>
           </div>
           {(user?.streak || 0) > 0 && (
-            <div className="flex items-center gap-1.5 bg-orange-50 px-3 py-1.5 rounded-lg">
-              <Flame size={14} className="text-orange-500" strokeWidth={2.5} />
+            <div className="flex items-center gap-1.5 bg-orange-50 px-3 py-1.5 rounded-lg whitespace-nowrap shrink-0">
+              <Flame size={14} className="text-orange-500 shrink-0" strokeWidth={2.5} />
               <span className="text-sm font-bold text-orange-600">{user.streak}</span>
             </div>
           )}
 
-          <div className="relative">
+          <div className="relative shrink-0">
             <button onClick={() => setProfileOpen(o => !o)} className="flex items-center gap-1.5 ml-1">
               <div className="w-8 h-8 rounded-full bg-gray-800 flex items-center justify-center text-white font-bold text-xs">{user?.username?.[0]?.toUpperCase() || '?'}</div>
               {isAdmin && <span className="text-xs font-bold text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded">Admin</span>}
