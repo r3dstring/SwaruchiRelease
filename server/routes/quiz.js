@@ -98,7 +98,7 @@ ${context}`;
   }
   return `You are an expert quiz designer for refinery and petrochemical training.
 ${topicBlock}${adaptive}${exclusionBlock}
-RULES: Answerable from material or standard knowledge. Test understanding. Plausible wrong options. Meaningful T/F. Fill-in answers 1-3 words. No duplicates.
+RULES: Test genuine understanding of concepts, facts, and relationships — never document structure or layout. NEVER ask about page numbers, section numbers, headings, or "where in the document" something appears. Answerable from material or standard knowledge. Plausible wrong options. Meaningful T/F. Fill-in answers 1-3 words, never a page/section number. No duplicates.
 DIFFICULTY: ${(difficulty||'medium').toUpperCase()} — ${DIFFICULTY_GUIDE[difficulty]||DIFFICULTY_GUIDE.medium}
 GENERATE EXACTLY ${count}: ${mcqCount} MCQ, ${tfCount} T/F, ${fitbCount} fill-in-blank.
 Every question MUST include "explanation" (1-2 sentences).

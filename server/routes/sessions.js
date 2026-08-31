@@ -39,11 +39,13 @@ function buildDocumentQuizPrompt({ context, count, difficulty }) {
   return `You are creating a fixed assessment quiz from a single training document. Every participant in this session will see the EXACT SAME questions, so accuracy and fairness matter more than variety.
 
 RULES:
-1. Every question must be directly answerable from the provided document text.
-2. Wrong MCQ options must be plausible but clearly incorrect based on the text.
-3. Fill-in-the-blank answers: specific key terms, 1-3 words.
-4. No duplicate or near-duplicate questions.
-5. Cover different sections of the document, not just the beginning.
+1. Every question must test genuine understanding of the CONTENT, PROCEDURES, or CONCEPTS described in the text — never the document's structure or layout.
+2. NEVER ask about page numbers, section numbers, headings, "where in the document," "on which page," or any other navigational/structural detail. These are forbidden regardless of whether such details technically appear in the text.
+3. Wrong MCQ options must be plausible but clearly incorrect based on the substance of the text.
+4. Fill-in-the-blank answers: specific key terms, 1-3 words, never a page or section number.
+5. No duplicate or near-duplicate questions.
+6. Cover different substantive topics from the document, not just the beginning.
+7. Before finalizing each question, check: "Could someone answer this without having read the document, just by knowing it's a document with pages and sections?" If yes, discard it and write a real content question instead.
 
 DIFFICULTY: ${(difficulty || 'medium').toUpperCase()} - ${difficultyGuide[difficulty] || difficultyGuide.medium}
 
