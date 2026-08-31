@@ -1,7 +1,7 @@
 import jwt from 'jsonwebtoken';
 import { get } from '../db.js';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'quizforge-dev-secret-change-me';
+const JWT_SECRET = process.env.JWT_SECRET || 'swaruchi-hrrl-dev-secret-change-me';
 
 export function generateToken(user) {
   // No expiresIn — tokens never expire. Sessions stay logged in indefinitely

@@ -38,8 +38,8 @@ export async function callLLM(prompt, provider) {
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${provider.key}`,
-        'HTTP-Referer': 'https://quizforge.app',
-        'X-Title': 'QuizForge',
+        'HTTP-Referer': 'https://swaruchi-app.pages.dev',
+        'X-Title': 'Swaruchi (HRRL)',
       },
       body: JSON.stringify({ model: 'openrouter/free', messages: [{ role: 'user', content: prompt }], temperature: 0.7, max_tokens: 3000 }),
     });

@@ -112,7 +112,7 @@ export default function KnowledgeMap() {
             </button>
           </div>
           {activeLeaf.data ? (
-            <div className="grid grid-cols-4 gap-3 mt-4">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
               <div><p className="font-display font-800 text-lg" style={{ color: heatColor(activeLeaf.data.accuracy) }}>{activeLeaf.data.accuracy}%</p><p className="text-[11px] text-gray-400 font-semibold">Accuracy</p></div>
               <div><p className="font-display font-800 text-lg text-gray-700">{activeLeaf.data.attempted}</p><p className="text-[11px] text-gray-400 font-semibold">Attempted</p></div>
               <div><p className="font-display font-800 text-lg text-gray-700">{timeAgo(activeLeaf.data.last_practiced)}</p><p className="text-[11px] text-gray-400 font-semibold">Last practiced</p></div>

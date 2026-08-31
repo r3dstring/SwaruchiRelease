@@ -1,5 +1,5 @@
 {
-  "name": "quizforge-server",
+  "name": "swaruchi-server",
   "private": true,
   "type": "module",
   "dependencies": {

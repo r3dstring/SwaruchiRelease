@@ -60,8 +60,8 @@ export default function Auth() {
     <div className="min-h-screen bg-gradient-to-b from-owl-50 to-white flex flex-col items-center justify-center px-4">
       <div className="text-center mb-8 animate-slide-up">
         <div className="text-6xl mb-4">🧠</div>
-        <h1 className="font-display font-900 text-4xl md:text-5xl text-gray-800 mb-3">Quiz<span className="text-lime-400">Forge</span></h1>
-        <p className="text-gray-500 text-lg max-w-sm mx-auto">Upload any PDF. Learn it through AI-powered quizzes. Level up.</p>
+        <h1 className="font-display font-900 text-4xl md:text-5xl text-gray-800 mb-3">Swaruchi</h1>
+        <p className="text-gray-500 text-lg max-w-sm mx-auto">Built for HRRL. Upload any PDF. Learn it through AI-powered quizzes. Level up.</p>
       </div>
       <div className="w-full max-w-sm animate-slide-up" style={{ animationDelay: '0.1s' }}>
         <div className="card shadow-lg">

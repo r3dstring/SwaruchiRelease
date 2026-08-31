@@ -66,7 +66,7 @@ app.use((err, req, res, next) => {
     await initDb();
     app.listen(PORT, () => {
       const providers = detectProviders();
-      console.log(`\n  QuizForge API running on port ${PORT}`);
+      console.log(`\n  Swaruchi API (HRRL) running on port ${PORT}`);
       console.log(`  AI providers (failover order): ${providers.length ? providers.join(' -> ') : 'NONE (mock questions)'}`);
       console.log(`  Admin: ${process.env.ADMIN_EMAIL || 'first signup becomes admin'}`);
       if (!providers.length) console.log(`  Set an AI key env var to enable real questions\n`);
