@@ -6,13 +6,13 @@ import { useIsAdmin } from '../context/AuthContext';
 import SessionReport from '../components/SessionReport';
 
 function CreateSessionForm({ pdfs, onCreated, onCancel }) {
-  const [form, setForm] = useState({ session_name: '', pdf_id: pdfs[0]?.id || '', count: 10, difficulty: 'medium' });
+  const [form, setForm] = useState({ session_name: '', pdf_id: pdfs[0]?.id || '', count: 10, difficulty: 'medium', questionTypes: ['mcq','tf','fitb'] });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!form.session_name.trim() || !form.pdf_id) return;
+    if (!form.session_name.trim() || !form.pdf_id || form.questionTypes.length === 0) return;
     setError(''); setLoading(true);
     try { onCreated(await api.createSession(form)); }
     catch (err) { setError(err.message); } finally { setLoading(false); }
@@ -44,11 +44,26 @@ function CreateSessionForm({ pdfs, onCreated, onCancel }) {
           ))}
         </div>
 
+        <label className="block text-sm font-semibold text-gray-600 mb-1 mt-2">Question Types</label>
+        <div className="flex gap-2">
+          {[{key:'mcq',label:'Multiple Choice'},{key:'tf',label:'True/False'},{key:'fitb',label:'Fill in Blank'}].map(t => {
+            const active = form.questionTypes.includes(t.key);
+            return (
+              <button key={t.key} type="button"
+                onClick={() => setForm(f => ({ ...f, questionTypes: active ? f.questionTypes.filter(x=>x!==t.key) : [...f.questionTypes, t.key] }))}
+                className={`flex-1 py-2 rounded-lg text-xs font-semibold transition-colors ${active?'bg-gray-800 text-white':'bg-gray-100 text-gray-500'}`}>
+                {t.label}
+              </button>
+            );
+          })}
+        </div>
+        {form.questionTypes.length === 0 && <p className="text-xs text-coral">Select at least one type</p>}
+
         {error && <div className="bg-red-50 text-coral text-sm font-medium px-4 py-2.5 rounded-lg">{error}</div>}
 
         <div className="flex gap-2 pt-2">
           <button type="button" onClick={onCancel} className="btn-secondary flex-1 text-sm">Cancel</button>
-          <button type="submit" disabled={loading || pdfs.length === 0} className="btn-primary flex-1 text-sm">{loading ? 'Generating quiz...' : 'Create Quiz'}</button>
+          <button type="submit" disabled={loading || pdfs.length === 0 || form.questionTypes.length === 0} className="btn-primary flex-1 text-sm">{loading ? 'Generating quiz...' : 'Create Quiz'}</button>
         </div>
       </form>
     </div>

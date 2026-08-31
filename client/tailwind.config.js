@@ -3,8 +3,22 @@ export default {
   content: ['./index.html', './src/**/*.{js,jsx}'],
   theme: {
     extend: {
-      colors: { lime: { 400: '#58CC02', 500: '#46A302', 600: '#3A8A01' }, owl: { 50: '#F7FFF0', 100: '#E5FFD0' }, golden: '#FFC800', coral: '#FF4B4B', sky: '#1CB0F6', grape: '#CE82FF' },
-      fontFamily: { display: ['Nunito', 'system-ui', 'sans-serif'], body: ['Inter', 'system-ui', 'sans-serif'] },
+      // Replaced Duolingo's stock consumer-app palette (bright saturated primaries)
+      // with muted, professional tones on the SAME class names used throughout
+      // the app — this changes what every existing bg-coral/text-sky/etc.
+      // resolves to, without needing to touch the ~90 places that use them.
+      colors: {
+        lime: { 400: '#16A34A', 500: '#15803D', 600: '#166534' },
+        owl: { 50: '#F0FDF4', 100: '#DCFCE7' },
+        coral: '#DC2626',
+        sky: '#2563EB',
+      },
+      fontFamily: { display: ['Manrope', 'system-ui', 'sans-serif'], body: ['Inter', 'system-ui', 'sans-serif'] },
+      // font-700/800/900 aren't real Tailwind utility names by default (Tailwind
+      // uses font-bold/font-extrabold/font-black) — every heading across the app
+      // using these numeric classes was silently getting NO font-weight applied
+      // at all. This extension makes those classes actually work.
+      fontWeight: { 700: '700', 800: '800', 900: '900' },
       animation: { 'bounce-in': 'bounceIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1)', 'slide-up': 'slideUp 0.3s ease-out', 'pulse-xp': 'pulseXP 0.6s ease-out', 'shake': 'shake 0.4s ease-in-out' },
       keyframes: {
         bounceIn: { '0%': { transform: 'scale(0.3)', opacity: '0' }, '100%': { transform: 'scale(1)', opacity: '1' } },

@@ -6,7 +6,7 @@ import FlagButton from '../components/FlagButton';
 const DIFFICULTY_LABEL = { easy: 'Easy', medium: 'Medium', hard: 'Hard' };
 
 export default function Quiz({ settings, onFinish, onBack }) {
-  const { count, difficulty, topic, consequenceMode } = settings;
+  const { count, difficulty, topic, consequenceMode, questionTypes } = settings;
   const [questions, setQuestions] = useState([]);
   const [docsReferenced, setDocsReferenced] = useState([]);
   const [current, setCurrent] = useState(0);
@@ -19,7 +19,7 @@ export default function Quiz({ settings, onFinish, onBack }) {
 
   useEffect(() => {
     setLoading(true);
-    api.generateQuiz({ count, difficulty, topic, consequenceMode })
+    api.generateQuiz({ count, difficulty, topic, consequenceMode, questionTypes })
       .then(data => { setQuestions(data.questions||[]); setDocsReferenced(data.docsReferenced||[]); })
       .catch(e => setError(e.message))
       .finally(() => setLoading(false));

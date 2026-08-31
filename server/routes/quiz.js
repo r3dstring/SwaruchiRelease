@@ -65,31 +65,74 @@ async function getAdaptiveDirective(userId, topic) {
   return `\nLEARNER PROFILE: ${accuracy}% accuracy on "${topic}" — MASTERED. Avoid basics. Focus on advanced aspects and edge cases.\n`;
 }
 
+// Concrete, example-driven difficulty criteria — a one-line hint wasn't enough
+// to make models actually vary output, so each level gets explicit criteria
+// PLUS example question stems to anchor the model's phrasing and complexity.
 const DIFFICULTY_GUIDE = {
-  easy: 'Straightforward recall. Basic facts, definitions, simple concepts.',
-  medium: 'Mix of recall and understanding. Relationships, causes, implications.',
-  hard: 'Deep analysis, comparison, inference, application.'
+  easy: `Test direct recall of a single fact, definition, or value explicitly stated in the material.
+Example stems: "What is the purpose of...", "Which component is responsible for...", "What does [term] refer to..."
+The answer should be findable in one sentence of the source text. No inference required.`,
+  medium: `Test understanding of HOW or WHY something works, or the relationship between two concepts — not just recall.
+Example stems: "Why is [X] done before [Y]...", "What happens if [parameter] increases...", "How does [component A] affect [component B]..."
+Require connecting at least two pieces of information from the material, not a single isolated fact.`,
+  hard: `Test analysis, troubleshooting, or synthesis across multiple concepts. The learner must reason through implications, not just recall a relationship.
+Example stems: "If [symptom] is observed, what is the most likely root cause among...", "Which sequence of actions would correctly address...", "What would happen to [downstream system] if [upstream failure] occurred..."
+Should require combining 2-3 facts and drawing a conclusion that isn't directly stated in the text.`
 };
+
 const CONSEQUENCE_DIFFICULTY = {
   easy: 'Simple operational situations with one clear safe response.',
   medium: 'Multiple process variables, operator must prioritize actions.',
   hard: 'Complex cascading situations requiring analytical thinking.'
 };
 
-function buildPrompt({ context, count, difficulty, topic, topicParent, consequenceMode, adaptive, previousQuestions }) {
-  const mcqCount = Math.ceil(count * 0.5);
-  const tfCount = Math.ceil(count * 0.25);
-  const fitbCount = count - mcqCount - tfCount;
+// Redistribute question-type counts based on which types the user selected.
+// If all three are chosen, keep the established 50/25/25 split; if fewer are
+// chosen, split evenly among just those, so a "T/F only" quiz gets 100% T/F
+// instead of silently still trying to generate MCQs.
+function computeTypeCounts(count, allowedTypes) {
+  const types = (allowedTypes && allowedTypes.length > 0) ? allowedTypes : ['mcq', 'tf', 'fitb'];
+  const counts = { mcq: 0, tf: 0, fitb: 0 };
+  if (types.length === 3) {
+    counts.mcq = Math.ceil(count * 0.5);
+    counts.tf = Math.ceil(count * 0.25);
+    counts.fitb = count - counts.mcq - counts.tf;
+  } else {
+    const base = Math.floor(count / types.length);
+    let remainder = count - base * types.length;
+    types.forEach(t => { counts[t] = base; });
+    // distribute remainder one at a time so totals still add up to `count`
+    for (let i = 0; remainder > 0; i = (i + 1) % types.length, remainder--) counts[types[i]]++;
+  }
+  return counts;
+}
+
+function buildPrompt({ context, count, difficulty, topic, topicParent, consequenceMode, adaptive, previousQuestions, questionTypes }) {
+  const counts = computeTypeCounts(count, questionTypes);
+  const formatLines = [];
+  if (counts.mcq > 0) formatLines.push(`- ${counts.mcq} multiple choice (type:"mcq") with 4 options and correct answer letter (a/b/c/d)`);
+  if (counts.tf > 0) formatLines.push(`- ${counts.tf} true/false (type:"tf") with answer "true" or "false"`);
+  if (counts.fitb > 0) formatLines.push(`- ${counts.fitb} fill in the blank (type:"fitb") with a _____ and a short answer`);
+  const formatBlock = formatLines.join('\n');
+
   const topicBlock = topic ? `\nTOPIC FOCUS: ${topicParent ? topicParent + ' > ' : ''}${topic}\nGenerate questions STRICTLY about "${topic}". Use retrieved material; supplement with industry knowledge if partial. Every question must pass: "Is this about ${topic}?"\n` : '';
   const exclusionBlock = previousQuestions.length > 0 ? `\nPREVIOUSLY ASKED — DO NOT repeat or create near-duplicates:\n${previousQuestions.map((q,i)=>`${i+1}. "${q}"`).join('\n')}\nGenerate completely different questions covering different aspects.\n` : '';
+
+  const antiPlainBlock = `
+QUALITY RULES — avoid generic, interchangeable-sounding questions:
+- Do NOT start every question with "Which of the following..." — vary sentence structure and openers.
+- Reference SPECIFIC details from the material: exact terms, numbers, component names, procedures — not vague paraphrases.
+- Each question should be answerable ONLY by someone who engaged with THIS material, not generic industry trivia.
+- Wrong MCQ options must be specific and plausible (real related concepts/values), never filler like "None of the above" or "All of the above".`;
 
   if (consequenceMode) {
     return `You are a senior refinery operations trainer creating SCENARIO-BASED assessment.
 Every question MUST present a realistic operational SITUATION requiring a decision — NO definition/recall.
-${topicBlock}${adaptive}${exclusionBlock}
+${topicBlock}${adaptive}${exclusionBlock}${antiPlainBlock}
 Focus: decision making, safety, troubleshooting, root cause, consequence awareness. Wrong options = plausible but incorrect operator actions.
 DIFFICULTY: ${(difficulty||'medium').toUpperCase()} — ${CONSEQUENCE_DIFFICULTY[difficulty]||CONSEQUENCE_DIFFICULTY.medium}
-GENERATE EXACTLY ${count}: ${mcqCount} scenario MCQ, ${tfCount} scenario T/F, ${fitbCount} scenario fill-in-blank.
+GENERATE EXACTLY ${count} scenario questions in these formats:
+${formatBlock}
 Every question MUST include "explanation" (2-3 sentences).
 Return ONLY valid JSON array, no markdown:
 [{"type":"mcq","question":"...","options":["...","...","...","..."],"answer":"a","explanation":"..."},{"type":"tf","question":"...","options":["True","False"],"answer":"true","explanation":"..."},{"type":"fitb","question":"... _____ ...","options":null,"answer":"...","explanation":"..."}]
@@ -97,10 +140,12 @@ RETRIEVED PLANT DOCUMENTATION:
 ${context}`;
   }
   return `You are an expert quiz designer for refinery and petrochemical training.
-${topicBlock}${adaptive}${exclusionBlock}
-RULES: Test genuine understanding of concepts, facts, and relationships — never document structure or layout. NEVER ask about page numbers, section numbers, headings, or "where in the document" something appears. Answerable from material or standard knowledge. Plausible wrong options. Meaningful T/F. Fill-in answers 1-3 words, never a page/section number. No duplicates.
-DIFFICULTY: ${(difficulty||'medium').toUpperCase()} — ${DIFFICULTY_GUIDE[difficulty]||DIFFICULTY_GUIDE.medium}
-GENERATE EXACTLY ${count}: ${mcqCount} MCQ, ${tfCount} T/F, ${fitbCount} fill-in-blank.
+${topicBlock}${adaptive}${exclusionBlock}${antiPlainBlock}
+RULES: Test genuine understanding of concepts, facts, and relationships — never document structure or layout. NEVER ask about page numbers, section numbers, headings, or "where in the document" something appears. Answerable from material or standard knowledge. Meaningful T/F. Fill-in answers 1-3 words, never a page/section number. No duplicates.
+DIFFICULTY: ${(difficulty||'medium').toUpperCase()}
+${DIFFICULTY_GUIDE[difficulty]||DIFFICULTY_GUIDE.medium}
+GENERATE EXACTLY ${count} questions in these formats:
+${formatBlock}
 Every question MUST include "explanation" (1-2 sentences).
 Return ONLY valid JSON array, no markdown:
 [{"type":"mcq","question":"...","options":["...","...","...","..."],"answer":"a","explanation":"..."},{"type":"tf","question":"...","options":["True","False"],"answer":"true","explanation":"..."},{"type":"fitb","question":"... _____ ...","options":null,"answer":"...","explanation":"..."}]
@@ -108,7 +153,7 @@ RETRIEVED STUDY MATERIAL:
 ${context}`;
 }
 
-async function generateQuestions(userId, { count, difficulty, topic, topicParent, consequenceMode }) {
+async function generateQuestions(userId, { count, difficulty, topic, topicParent, consequenceMode, questionTypes }) {
   const providers = getAllProviders();
   const { context, docsReferenced } = await retrieveForTopic(topic || '', { rotate: true });
   if (!context) return { questions: null, docsReferenced: [] };
@@ -116,7 +161,7 @@ async function generateQuestions(userId, { count, difficulty, topic, topicParent
 
   const adaptive = await getAdaptiveDirective(userId, topic);
   const previousQuestions = await getRecentQuestions(userId, topic);
-  const prompt = buildPrompt({ context, count, difficulty, topic, topicParent, consequenceMode, adaptive, previousQuestions });
+  const prompt = buildPrompt({ context, count, difficulty, topic, topicParent, consequenceMode, adaptive, previousQuestions, questionTypes });
 
   // Try each configured provider in order. If one fails (rate limit, outage,
   // bad response), automatically move to the next instead of falling straight
@@ -144,14 +189,17 @@ async function generateQuestions(userId, { count, difficulty, topic, topicParent
   return { questions: null, docsReferenced };
 }
 
-function generateMockQuestions(topic) {
+function generateMockQuestions(topic, questionTypes = null) {
   const t = topic || 'refinery operations';
-  return [
+  const pool = [
     { type:'mcq', question:`Which best describes ${t}?`, options:['Core operational concept','Unrelated topic','Historical detail','Marketing term'], answer:'a', explanation:'Mock — configure an AI key.' },
     { type:'mcq', question:`In ${t}, what should the operator prioritize?`, options:['Safety and stable operation','Speed above all','Skipping checks','Ignoring alarms'], answer:'a', explanation:'Safety first.' },
     { type:'tf', question:`${t} is a relevant training area.`, options:['True','False'], answer:'true', explanation:'Part of the tree.' },
     { type:'fitb', question:`The area being tested is _____.`, answer: t.toLowerCase(), explanation:'The selected topic.' },
   ];
+  const allowed = (questionTypes && questionTypes.length > 0) ? questionTypes : ['mcq','tf','fitb'];
+  const filtered = pool.filter(q => allowed.includes(q.type));
+  return filtered.length > 0 ? filtered : pool;
 }
 
 async function updateTopicProgress(userId, topic, correct, incorrect) {
@@ -166,14 +214,15 @@ async function updateTopicProgress(userId, topic, correct, incorrect) {
 }
 
 router.post('/generate', authMiddleware, async (req, res) => {
-  const { count=10, difficulty='medium', topic=null, topicParent=null, consequenceMode=false } = req.body;
+  const { count=10, difficulty='medium', topic=null, topicParent=null, consequenceMode=false, questionTypes=null } = req.body;
   const qCount = Math.min(Math.max(parseInt(count)||10, 5), 20);
   const diff = ['easy','medium','hard'].includes(difficulty) ? difficulty : 'medium';
+  const validTypes = Array.isArray(questionTypes) ? questionTypes.filter(t => ['mcq','tf','fitb'].includes(t)) : null;
   const docRow = await get('SELECT COUNT(*)::int AS c FROM pdfs');
   if ((docRow?.c || 0) === 0) return res.status(400).json({ error: 'No documents in the knowledge base yet. Ask your admin to upload training material.' });
 
-  const { questions: aiQ, docsReferenced } = await generateQuestions(req.user.id, { count: qCount, difficulty: diff, topic, topicParent, consequenceMode: !!consequenceMode });
-  const questions = aiQ || generateMockQuestions(topic);
+  const { questions: aiQ, docsReferenced } = await generateQuestions(req.user.id, { count: qCount, difficulty: diff, topic, topicParent, consequenceMode: !!consequenceMode, questionTypes: validTypes });
+  const questions = aiQ || generateMockQuestions(topic, validTypes);
   if (aiQ) await logQuestionsToHistory(req.user.id, topic, questions);
   res.json({ questions, topic, consequenceMode: !!consequenceMode, docsReferenced });
 });

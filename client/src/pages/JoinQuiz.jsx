@@ -84,59 +84,66 @@ function ParticipantDetails({ session, code, onJoined }) {
 // ── Step 3: take the quiz (simplified, no gamification) ───────
 function TakeQuiz({ sessionName, participantId, questions, onFinish }) {
   const [current, setCurrent] = useState(0);
-  const [answers, setAnswers] = useState({});
-  const [selected, setSelected] = useState(null);
-  const [fitbInput, setFitbInput] = useState('');
+  const [answers, setAnswers] = useState({}); // canonical answer store, keyed by question index — persists across navigation
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   const q = questions[current];
   const total = questions.length;
-  const progress = Math.round((current / total) * 100);
+  const answeredCount = Object.keys(answers).filter(i => answers[i]).length;
 
-  const handleNext = async () => {
-    const value = q.type === 'fitb' ? fitbInput.trim() : selected;
-    const updated = { ...answers, [current]: value };
-    setAnswers(updated);
+  const setAnswerForCurrent = (value) => setAnswers(prev => ({ ...prev, [current]: value }));
 
-    if (current + 1 >= total) {
-      setSubmitting(true);
-      try {
-        const answerArray = questions.map((_, i) => updated[i] || '');
-        const result = await api.submitSession({ participant_id: participantId, answers: answerArray });
-        onFinish(result);
-      } catch (err) { setError(err.message); } finally { setSubmitting(false); }
-      return;
-    }
-    setCurrent(c => c + 1); setSelected(null); setFitbInput('');
+  const goTo = (index) => setCurrent(Math.max(0, Math.min(total - 1, index)));
+
+  const handleSubmit = async () => {
+    setSubmitting(true);
+    try {
+      const answerArray = questions.map((_, i) => answers[i] || '');
+      const result = await api.submitSession({ participant_id: participantId, answers: answerArray });
+      onFinish(result);
+    } catch (err) { setError(err.message); } finally { setSubmitting(false); }
   };
 
   if (error) return <div className="min-h-screen flex flex-col items-center justify-center px-4"><AlertCircle className="w-10 h-10 text-coral mb-3" /><p className="font-semibold text-gray-800 mb-2">Something went wrong</p><p className="text-sm text-gray-400">{error}</p></div>;
 
-  const canProceed = q.type === 'fitb' ? fitbInput.trim() : selected !== null;
+  const currentAnswer = answers[current];
 
   return (
     <div className="min-h-screen bg-gray-50 px-4 py-8">
       <div className="max-w-xl mx-auto">
-        <div className="flex items-center gap-3 mb-6">
-          <p className="text-sm font-bold text-gray-500 shrink-0">{sessionName}</p>
-          <div className="flex-1 bg-gray-200 rounded-full h-3 overflow-hidden"><div className="bg-lime-400 h-full rounded-full transition-all duration-500" style={{ width: `${progress}%` }} /></div>
-          <span className="text-sm font-bold text-gray-500 shrink-0">{current + 1}/{total}</span>
+        <div className="flex items-center gap-3 mb-4">
+          <p className="text-sm font-semibold text-gray-600 shrink-0 truncate max-w-[40%]">{sessionName}</p>
+          <div className="flex-1 bg-gray-200 rounded-full h-2.5 overflow-hidden"><div className="bg-lime-500 h-full rounded-full transition-all duration-500" style={{ width: `${(answeredCount/total)*100}%` }} /></div>
+          <span className="text-sm font-semibold text-gray-500 shrink-0">{answeredCount}/{total} answered</span>
+        </div>
+
+        {/* Question navigator — jump to any question, see which are answered */}
+        <div className="flex flex-wrap gap-1.5 mb-5">
+          {questions.map((_, i) => (
+            <button key={i} onClick={() => goTo(i)}
+              className={`w-8 h-8 rounded-lg text-xs font-semibold transition-colors ${
+                i === current ? 'bg-gray-900 text-white' : answers[i] ? 'bg-lime-100 text-lime-700' : 'bg-white border border-gray-200 text-gray-400'
+              }`}>
+              {i + 1}
+            </button>
+          ))}
         </div>
 
         <div className="card">
-          <h2 className="font-display font-800 text-xl text-gray-800 mb-6">{q.question}</h2>
+          <p className="text-xs font-semibold text-gray-400 mb-2">Question {current + 1} of {total}</p>
+          <h2 className="font-display font-700 text-xl text-gray-900 mb-6">{q.question}</h2>
 
           {q.type === 'fitb' ? (
-            <input type="text" value={fitbInput} onChange={e => setFitbInput(e.target.value)} placeholder="Type your answer..." className="input-field text-lg py-4 text-center font-semibold mb-6" autoFocus onKeyDown={e => e.key === 'Enter' && canProceed && handleNext()} />
+            <input type="text" value={currentAnswer || ''} onChange={e => setAnswerForCurrent(e.target.value)} placeholder="Type your answer..." className="input-field text-lg py-4 text-center font-semibold mb-6" autoFocus />
           ) : (
-            <div className="space-y-3 mb-6">
+            <div className="space-y-2.5 mb-6">
               {(q.options || []).map((opt, i) => {
                 const letter = String.fromCharCode(97 + i);
                 const value = q.type === 'tf' ? opt.toLowerCase() : letter;
-                const isSel = selected === value;
+                const isSel = currentAnswer === value;
                 return (
-                  <button key={i} onClick={() => setSelected(value)} className={`w-full text-left px-5 py-3.5 rounded-xl border-2 font-medium transition-all ${isSel ? 'border-sky bg-sky/5' : 'border-gray-200 hover:border-gray-300'}`}>
+                  <button key={i} onClick={() => setAnswerForCurrent(value)} className={`w-full text-left px-4 py-3.5 rounded-xl border-2 font-medium transition-colors ${isSel ? 'border-sky bg-sky/5' : 'border-gray-200 hover:border-gray-300'}`}>
                     {opt}
                   </button>
                 );
@@ -144,10 +151,19 @@ function TakeQuiz({ sessionName, participantId, questions, onFinish }) {
             </div>
           )}
 
-          <button onClick={handleNext} disabled={!canProceed || submitting} className="btn-primary w-full text-base">
-            {submitting ? 'Submitting...' : current + 1 >= total ? 'Submit Quiz' : 'Next'}
-          </button>
+          <div className="flex gap-2">
+            <button onClick={() => goTo(current - 1)} disabled={current === 0} className="btn-secondary px-4 disabled:opacity-40 disabled:cursor-not-allowed">Previous</button>
+            {current + 1 < total ? (
+              <button onClick={() => goTo(current + 1)} className="btn-primary flex-1">Next</button>
+            ) : (
+              <button onClick={handleSubmit} disabled={submitting} className="btn-primary flex-1">{submitting ? 'Submitting...' : 'Submit Quiz'}</button>
+            )}
+          </div>
         </div>
+
+        {answeredCount < total && (
+          <p className="text-center text-xs text-gray-400 mt-4">{total - answeredCount} question{total-answeredCount!==1?'s':''} still unanswered — you can submit anyway or go back and complete them.</p>
+        )}
       </div>
     </div>
   );

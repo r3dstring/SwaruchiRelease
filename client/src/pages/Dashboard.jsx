@@ -64,6 +64,7 @@ export default function Dashboard({ onStartQuiz }) {
   const [showSettings, setShowSettings] = useState(false);
   const [quizCount, setQuizCount] = useState(10);
   const [quizDiff, setQuizDiff] = useState('medium');
+  const [quizTypes, setQuizTypes] = useState(['mcq','tf','fitb']);
   const [consequenceMode, setConsequenceMode] = useState(false);
   const [selTopicId, setSelTopicId] = useState(null);
   const [selTopicLabel, setSelTopicLabel] = useState('');
@@ -96,7 +97,7 @@ export default function Dashboard({ onStartQuiz }) {
 
   const handleLaunch = () => {
     if (!selTopicId) return;
-    onStartQuiz({ count: quizCount, difficulty: quizDiff, consequenceMode, topic: { id: selTopicId, label: selTopicLabel, parent: selTopicParent } });
+    onStartQuiz({ count: quizCount, difficulty: quizDiff, consequenceMode, questionTypes: quizTypes.length > 0 ? quizTypes : ['mcq','tf','fitb'], topic: { id: selTopicId, label: selTopicLabel, parent: selTopicParent } });
     setShowSettings(false);
   };
 
@@ -127,6 +128,20 @@ export default function Dashboard({ onStartQuiz }) {
                   <button key={d.key} onClick={()=>setQuizDiff(d.key)} className={`flex-1 py-2.5 rounded-lg text-sm font-semibold transition-colors ${quizDiff===d.key?`${d.color} text-white`:'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>{d.label}</button>
                 ))}
               </div>
+              <label className="block text-sm font-semibold text-gray-600 mb-2">Question Types</label>
+              <div className="flex gap-2 mb-5">
+                {[{key:'mcq',label:'Multiple Choice'},{key:'tf',label:'True/False'},{key:'fitb',label:'Fill in Blank'}].map(t=>{
+                  const active = quizTypes.includes(t.key);
+                  return (
+                    <button key={t.key} type="button"
+                      onClick={()=>setQuizTypes(prev => active ? prev.filter(x=>x!==t.key) : [...prev, t.key])}
+                      className={`flex-1 py-2.5 rounded-lg text-xs font-semibold transition-colors ${active?'bg-gray-800 text-white':'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>
+                      {t.label}
+                    </button>
+                  );
+                })}
+              </div>
+              {quizTypes.length === 0 && <p className="text-xs text-coral -mt-3 mb-4">Select at least one question type — defaulting to all types.</p>}
               <button onClick={()=>setConsequenceMode(!consequenceMode)}
                 className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg border transition-colors ${consequenceMode?'border-purple-300 bg-purple-50':'border-gray-200 hover:border-gray-300'}`}>
                 <div className={`w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 transition-colors ${consequenceMode?'bg-purple-600 border-purple-600':'border-gray-300'}`}>

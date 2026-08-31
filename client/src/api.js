@@ -22,8 +22,8 @@ export const api = {
   listPdfs: () => request('/pdf/list'),
   deletePdf: (id) => request(`/pdf/${id}`, { method: 'DELETE' }),
 
-  generateQuiz: ({ count=10, difficulty='medium', topic=null, consequenceMode=false }) =>
-    request('/quiz/generate', { method: 'POST', body: { count, difficulty, topic: topic?.label||null, topicParent: topic?.parent||null, consequenceMode } }),
+  generateQuiz: ({ count=10, difficulty='medium', topic=null, consequenceMode=false, questionTypes=null }) =>
+    request('/quiz/generate', { method: 'POST', body: { count, difficulty, topic: topic?.label||null, topicParent: topic?.parent||null, consequenceMode, questionTypes } }),
   submitQuiz: (data) => request('/quiz/submit', { method: 'POST', body: data }),
   flagQuestion: (data) => request('/quiz/flag', { method: 'POST', body: data }),
   quizHistory: () => request('/quiz/history'),

@@ -27,32 +27,59 @@ function parsePositiveInt(value) {
   return Number.isInteger(n) && n > 0 && String(n) === String(value).trim() ? n : null;
 }
 
-function buildDocumentQuizPrompt({ context, count, difficulty }) {
-  const mcqCount = Math.ceil(count * 0.5);
-  const tfCount = Math.ceil(count * 0.25);
-  const fitbCount = count - mcqCount - tfCount;
+function computeTypeCounts(count, allowedTypes) {
+  const types = (allowedTypes && allowedTypes.length > 0) ? allowedTypes : ['mcq', 'tf', 'fitb'];
+  const counts = { mcq: 0, tf: 0, fitb: 0 };
+  if (types.length === 3) {
+    counts.mcq = Math.ceil(count * 0.5);
+    counts.tf = Math.ceil(count * 0.25);
+    counts.fitb = count - counts.mcq - counts.tf;
+  } else {
+    const base = Math.floor(count / types.length);
+    let remainder = count - base * types.length;
+    types.forEach(t => { counts[t] = base; });
+    for (let i = 0; remainder > 0; i = (i + 1) % types.length, remainder--) counts[types[i]]++;
+  }
+  return counts;
+}
+
+function buildDocumentQuizPrompt({ context, count, difficulty, questionTypes }) {
+  const counts = computeTypeCounts(count, questionTypes);
+  const formatLines = [];
+  if (counts.mcq > 0) formatLines.push(`- ${counts.mcq} multiple choice (type:"mcq") with 4 options and correct answer letter (a/b/c/d)`);
+  if (counts.tf > 0) formatLines.push(`- ${counts.tf} true/false (type:"tf") with answer "true" or "false"`);
+  if (counts.fitb > 0) formatLines.push(`- ${counts.fitb} fill in the blank (type:"fitb") with a _____ and a short answer`);
+  const formatBlock = formatLines.join('\n');
+
   const difficultyGuide = {
-    easy: 'Straightforward recall. Basic facts and definitions directly stated in the text.',
-    medium: 'Mix of recall and understanding - facts plus relationships and implications.',
-    hard: 'Deep analysis, comparison, and inference requiring combined ideas from the text.',
+    easy: `Test direct recall of a single fact, definition, or value explicitly stated in the material.
+Example stems: "What is the purpose of...", "Which component is responsible for...", "What does [term] refer to..."
+The answer should be findable in one sentence of the source text. No inference required.`,
+    medium: `Test understanding of HOW or WHY something works, or the relationship between two concepts — not just recall.
+Example stems: "Why is [X] done before [Y]...", "What happens if [parameter] increases...", "How does [component A] affect [component B]..."
+Require connecting at least two pieces of information from the material, not a single isolated fact.`,
+    hard: `Test analysis, troubleshooting, or synthesis across multiple concepts. The learner must reason through implications, not just recall a relationship.
+Example stems: "If [symptom] is observed, what is the most likely root cause among...", "Which sequence of actions would correctly address...", "What would happen to [downstream system] if [upstream failure] occurred..."
+Should require combining 2-3 facts and drawing a conclusion that isn't directly stated in the text.`,
   };
+
   return `You are creating a fixed assessment quiz from a single training document. Every participant in this session will see the EXACT SAME questions, so accuracy and fairness matter more than variety.
 
 RULES:
 1. Every question must test genuine understanding of the CONTENT, PROCEDURES, or CONCEPTS described in the text — never the document's structure or layout.
 2. NEVER ask about page numbers, section numbers, headings, "where in the document," "on which page," or any other navigational/structural detail. These are forbidden regardless of whether such details technically appear in the text.
-3. Wrong MCQ options must be plausible but clearly incorrect based on the substance of the text.
+3. Wrong MCQ options must be specific and plausible (real related concepts/values), never filler like "None of the above" or "All of the above".
 4. Fill-in-the-blank answers: specific key terms, 1-3 words, never a page or section number.
 5. No duplicate or near-duplicate questions.
 6. Cover different substantive topics from the document, not just the beginning.
 7. Before finalizing each question, check: "Could someone answer this without having read the document, just by knowing it's a document with pages and sections?" If yes, discard it and write a real content question instead.
+8. Do NOT start every question with "Which of the following..." — vary sentence structure and openers. Reference specific terms, numbers, or procedures from the material.
 
-DIFFICULTY: ${(difficulty || 'medium').toUpperCase()} - ${difficultyGuide[difficulty] || difficultyGuide.medium}
+DIFFICULTY: ${(difficulty || 'medium').toUpperCase()}
+${difficultyGuide[difficulty] || difficultyGuide.medium}
 
-GENERATE EXACTLY ${count} questions:
-- ${mcqCount} multiple choice (type:"mcq") with 4 options and correct answer letter (a/b/c/d)
-- ${tfCount} true/false (type:"tf") with answer "true" or "false"
-- ${fitbCount} fill in the blank (type:"fitb") with a _____ and a short answer
+GENERATE EXACTLY ${count} questions in these formats:
+${formatBlock}
 
 Every question must include an "explanation" field (1-2 sentences).
 
@@ -63,14 +90,17 @@ DOCUMENT TEXT:
 ${context}`;
 }
 
-function mockDocumentQuiz(count, filename) {
+function mockDocumentQuiz(count, filename, questionTypes = null) {
   const base = [
     { type:'mcq', question:`Which of the following relates to the content of ${filename}?`, options:['See document for details','Unrelated topic','Historical footnote','Marketing term'], answer:'a', explanation:'Configure an AI provider key for real questions generated from the document.' },
     { type:'tf', question:`${filename} contains information relevant to this assessment.`, options:['True','False'], answer:'true', explanation:'Mock question.' },
     { type:'fitb', question:'The document being assessed is called _____.', answer: filename.replace('.pdf','').toLowerCase(), explanation:'Mock question.' },
   ];
+  const allowed = (questionTypes && questionTypes.length > 0) ? questionTypes : ['mcq','tf','fitb'];
+  const pool = base.filter(q => allowed.includes(q.type));
+  const usable = pool.length > 0 ? pool : base;
   const out = [];
-  while (out.length < count) out.push(base[out.length % base.length]);
+  while (out.length < count) out.push(usable[out.length % usable.length]);
   return out.slice(0, count);
 }
 
@@ -88,9 +118,10 @@ async function getPdfChunks(pdf) {
 // Admin: create a session from a single document
 router.post('/', authMiddleware, requireAdmin, async (req, res) => {
   try {
-    const { session_name, pdf_id, count = 10, difficulty = 'medium' } = req.body;
+    const { session_name, pdf_id, count = 10, difficulty = 'medium', questionTypes = null } = req.body;
     const pdfId = parsePositiveInt(pdf_id);
     if (!session_name?.trim() || !pdfId) return res.status(400).json({ error: 'session_name and a valid pdf_id are required' });
+    const validTypes = Array.isArray(questionTypes) ? questionTypes.filter(t => ['mcq','tf','fitb'].includes(t)) : null;
 
     const pdf = await get('SELECT * FROM pdfs WHERE id = ?', [pdfId]);
     if (!pdf) return res.status(404).json({ error: 'Document not found' });
@@ -100,7 +131,7 @@ router.post('/', authMiddleware, requireAdmin, async (req, res) => {
 
     const chunks = await getPdfChunks(pdf);
     const context = chunks.join('\n\n').slice(0, 7000);
-    const prompt = buildDocumentQuizPrompt({ context, count: qCount, difficulty: diff });
+    const prompt = buildDocumentQuizPrompt({ context, count: qCount, difficulty: diff, questionTypes: validTypes });
 
     let questions = await generateWithFailover(prompt, { count: qCount });
     if (questions) {
@@ -108,7 +139,7 @@ router.post('/', authMiddleware, requireAdmin, async (req, res) => {
     }
     if (!questions || questions.length === 0) {
       console.log('Session quiz generation failed - using mock questions');
-      questions = mockDocumentQuiz(qCount, pdf.filename);
+      questions = mockDocumentQuiz(qCount, pdf.filename, validTypes);
     }
 
     const joinCode = await generateUniqueJoinCode();
