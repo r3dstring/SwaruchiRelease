@@ -49,8 +49,8 @@ export default function Navbar({ onNavigate, currentPage }) {
             );
           })}
 
-          <button onClick={joinQuiz} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold text-sky border border-sky/30 hover:bg-sky/5 transition-colors ml-1">
-            <QrCode size={16} strokeWidth={2} />
+          <button onClick={joinQuiz} className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-sm font-semibold text-white bg-lime-500 hover:bg-lime-600 transition-colors">
+            <QrCode size={15} strokeWidth={2} />
             Join a Quiz
           </button>
 
@@ -112,7 +112,7 @@ export default function Navbar({ onNavigate, currentPage }) {
             );
           })}
 
-          <button onClick={joinQuiz} className="w-full flex items-center gap-2.5 text-left px-3 py-2.5 rounded-lg text-sm font-semibold text-sky border border-sky/30">
+          <button onClick={joinQuiz} className="w-full flex items-center gap-2.5 text-left px-3 py-2.5 rounded-lg text-sm font-semibold text-white bg-lime-500">
             <QrCode size={17} strokeWidth={2} /> Join a Quiz
           </button>
 

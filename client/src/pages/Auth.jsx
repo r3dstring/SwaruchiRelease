@@ -68,15 +68,15 @@ export default function Auth() {
       </div>
 
       {/* Prominent Join a Quiz entry point — no account needed */}
-      <button onClick={joinQuiz} className="w-full max-w-sm bg-white border-2 border-sky/30 hover:border-sky/60 rounded-xl p-4 mb-4 flex items-center gap-3 transition-colors group">
-        <div className="w-10 h-10 rounded-lg bg-sky/10 flex items-center justify-center shrink-0">
-          <QrCode size={20} className="text-sky" />
+      <button onClick={joinQuiz} className="w-full max-w-sm bg-white border-2 border-lime-200 hover:border-lime-400 rounded-xl p-4 mb-4 flex items-center gap-3 transition-colors group">
+        <div className="w-10 h-10 rounded-lg bg-lime-50 flex items-center justify-center shrink-0">
+          <QrCode size={20} className="text-lime-600" />
         </div>
         <div className="text-left flex-1">
           <p className="font-semibold text-gray-900 text-sm">Joining a training session?</p>
           <p className="text-xs text-gray-500">Enter a quiz code — no account needed</p>
         </div>
-        <ArrowRight size={18} className="text-gray-300 group-hover:text-sky transition-colors" />
+        <ArrowRight size={18} className="text-gray-300 group-hover:text-lime-500 transition-colors" />
       </button>
 
       <div className="w-full max-w-sm flex items-center gap-3 mb-4">
