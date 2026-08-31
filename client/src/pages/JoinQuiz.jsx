@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { Target, ClipboardEdit, AlertCircle, CheckCircle2, ClipboardList } from 'lucide-react';
 import { api } from '../api';
 
 // ── Step 1: enter the join code ───────────────────────────────
@@ -24,7 +25,7 @@ function CodeEntry({ onFound, prefillCode }) {
   return (
     <div className="min-h-screen bg-gradient-to-b from-owl-50 to-white flex flex-col items-center justify-center px-4">
       <div className="text-center mb-8">
-        <div className="text-6xl mb-4">🎯</div>
+        <div className="w-14 h-14 rounded-2xl bg-sky/10 flex items-center justify-center mx-auto mb-4"><Target size={26} className="text-sky" /></div>
         <h1 className="font-display font-900 text-3xl md:text-4xl text-gray-800 mb-2">Join a Quiz</h1>
         <p className="text-gray-500">Enter the code your trainer gave you</p>
       </div>
@@ -65,7 +66,7 @@ function ParticipantDetails({ session, code, onJoined }) {
   return (
     <div className="min-h-screen bg-gradient-to-b from-owl-50 to-white flex flex-col items-center justify-center px-4">
       <div className="text-center mb-6">
-        <div className="text-5xl mb-3">📝</div>
+        <div className="w-12 h-12 rounded-xl bg-purple-50 flex items-center justify-center mx-auto mb-3"><ClipboardEdit size={22} className="text-purple-600" /></div>
         <h1 className="font-display font-800 text-2xl text-gray-800 mb-1">{session.session_name}</h1>
         <p className="text-gray-500 text-sm">{session.count} questions · {session.difficulty} difficulty</p>
       </div>
@@ -110,7 +111,7 @@ function TakeQuiz({ sessionName, participantId, questions, onFinish }) {
     setCurrent(c => c + 1); setSelected(null); setFitbInput('');
   };
 
-  if (error) return <div className="min-h-screen flex flex-col items-center justify-center px-4"><p className="text-5xl mb-4">😵</p><p className="font-bold text-gray-700 mb-2">Something went wrong</p><p className="text-sm text-gray-400">{error}</p></div>;
+  if (error) return <div className="min-h-screen flex flex-col items-center justify-center px-4"><AlertCircle className="w-10 h-10 text-coral mb-3" /><p className="font-semibold text-gray-800 mb-2">Something went wrong</p><p className="text-sm text-gray-400">{error}</p></div>;
 
   const canProceed = q.type === 'fitb' ? fitbInput.trim() : selected !== null;
 
@@ -158,7 +159,9 @@ function ResultScreen({ result, sessionName }) {
   return (
     <div className="min-h-screen bg-gradient-to-b from-owl-50 to-white flex flex-col items-center justify-center px-4">
       <div className="text-center">
-        <div className="text-6xl mb-4">{pct >= 70 ? '✅' : '📋'}</div>
+        <div className="w-14 h-14 rounded-2xl bg-lime-50 flex items-center justify-center mx-auto mb-4">
+          {pct >= 70 ? <CheckCircle2 size={26} className="text-lime-600" /> : <ClipboardList size={26} className="text-gray-500" />}
+        </div>
         <h1 className="font-display font-900 text-2xl text-gray-800 mb-1">Quiz Submitted</h1>
         <p className="text-gray-500 mb-6">{sessionName}</p>
         <div className="card inline-block px-10 py-6">

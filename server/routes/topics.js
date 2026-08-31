@@ -36,8 +36,8 @@ router.post('/admin/branch', authMiddleware, requireAdmin, async (req, res) => {
   if (!label?.trim()) return res.status(400).json({ error: 'Branch label required' });
   const maxOrder = await get('SELECT COALESCE(MAX(sort_order), -1) as m FROM topics WHERE parent_id IS NULL');
   const result = await run('INSERT INTO topics (parent_id, label, icon, sort_order) VALUES (NULL, ?, ?, ?)',
-    [label.trim(), icon?.trim() || '📁', (maxOrder?.m ?? -1) + 1]);
-  res.json({ id: result.lastInsertRowid, label: label.trim(), icon: icon?.trim() || '📁', children: [] });
+    [label.trim(), icon?.trim() || null, (maxOrder?.m ?? -1) + 1]);
+  res.json({ id: result.lastInsertRowid, label: label.trim(), icon: icon?.trim() || null, children: [] });
 });
 
 // ── Admin: create a leaf under a branch ──────────────────────

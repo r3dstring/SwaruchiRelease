@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Ban, FolderTree } from 'lucide-react';
 import { api } from '../api';
 import { useTopics } from '../context/TopicsContext';
 import { useIsAdmin } from '../context/AuthContext';
@@ -8,12 +9,12 @@ export default function TopicManager() {
   const { topics, refresh } = useTopics();
   const [expanded, setExpanded] = useState({});
   const [editingLeaf, setEditingLeaf] = useState(null); // { id, label, keywords }
-  const [newBranch, setNewBranch] = useState({ open: false, label: '', icon: '📁' });
+  const [newBranch, setNewBranch] = useState({ open: false, label: '', icon: '' });
   const [newLeaf, setNewLeaf] = useState({ branchId: null, label: '', keywords: '' });
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
-  if (!isAdmin) return <div className="max-w-lg mx-auto px-4 py-16 text-center"><p className="text-4xl mb-4">🚫</p><p className="font-bold text-gray-700">Admin access required</p></div>;
+  if (!isAdmin) return <div className="max-w-lg mx-auto px-4 py-16 text-center"><Ban className="w-10 h-10 text-gray-300 mx-auto mb-3" /><p className="font-semibold text-gray-700">Admin access required</p></div>;
 
   const toggle = (id) => setExpanded(prev => ({ ...prev, [id]: !prev[id] }));
 
@@ -21,8 +22,8 @@ export default function TopicManager() {
     if (!newBranch.label.trim()) return;
     setBusy(true); setError('');
     try {
-      await api.adminCreateBranch({ label: newBranch.label.trim(), icon: newBranch.icon.trim() || '📁' });
-      setNewBranch({ open: false, label: '', icon: '📁' });
+      await api.adminCreateBranch({ label: newBranch.label.trim(), icon: newBranch.icon.trim() || null });
+      setNewBranch({ open: false, label: '', icon: '' });
       await refresh();
     } catch (e) { setError(e.message); } finally { setBusy(false); }
   };
@@ -64,7 +65,9 @@ export default function TopicManager() {
   return (
     <div className="max-w-3xl mx-auto px-4 py-8">
       <div className="text-center mb-6">
-        <span className="text-5xl">🗂️</span>
+        <div className="w-12 h-12 rounded-xl bg-gray-100 flex items-center justify-center mx-auto mb-3">
+          <FolderTree size={22} className="text-gray-600" />
+        </div>
         <h1 className="font-display font-900 text-2xl text-gray-800 mt-2">Manage Topics</h1>
         <p className="text-sm text-gray-400 font-medium">Edit the topic tree used for quizzes and the Knowledge Map</p>
       </div>
@@ -76,11 +79,11 @@ export default function TopicManager() {
         <div className="card mb-4 border-lime-400/40">
           <p className="text-sm font-bold text-gray-600 mb-3">New Branch</p>
           <div className="flex gap-2 mb-3">
-            <input value={newBranch.icon} onChange={e=>setNewBranch(b=>({...b, icon: e.target.value}))} placeholder="📁" className="input-field w-16 text-center" maxLength={2}/>
+            <input value={newBranch.icon} onChange={e=>setNewBranch(b=>({...b, icon: e.target.value}))} placeholder="Icon" className="input-field w-16 text-center text-xs" maxLength={2}/>
             <input value={newBranch.label} onChange={e=>setNewBranch(b=>({...b, label: e.target.value}))} placeholder="Branch name" className="input-field flex-1"/>
           </div>
           <div className="flex gap-2">
-            <button onClick={()=>setNewBranch({open:false,label:'',icon:'📁'})} className="btn-secondary text-sm py-2 px-4">Cancel</button>
+            <button onClick={()=>setNewBranch({open:false,label:'',icon:''})} className="btn-secondary text-sm py-2 px-4">Cancel</button>
             <button onClick={handleCreateBranch} disabled={busy||!newBranch.label.trim()} className="btn-primary text-sm py-2 px-4">Create Branch</button>
           </div>
         </div>

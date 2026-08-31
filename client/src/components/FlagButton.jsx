@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Flag, Check } from 'lucide-react';
 import { api } from '../api';
 
 const REASONS = [
@@ -40,7 +41,7 @@ export default function FlagButton({ question, topic }) {
   if (submitted) {
     return (
       <div className="flex items-center gap-1.5 text-xs text-gray-400 font-medium mt-2">
-        <span>✓</span><span>Reported — thanks for the feedback</span>
+        <Check size={14} /><span>Reported — thanks for the feedback</span>
       </div>
     );
   }
@@ -49,7 +50,7 @@ export default function FlagButton({ question, topic }) {
     <div className="mt-2">
       {!open ? (
         <button onClick={() => setOpen(true)} className="text-xs text-gray-400 hover:text-coral transition-colors font-medium flex items-center gap-1">
-          <span>🚩</span><span>Report issue</span>
+          <Flag size={13} /><span>Report issue</span>
         </button>
       ) : (
         <div className="mt-2 p-3 bg-gray-50 rounded-xl border border-gray-200 animate-slide-up">
