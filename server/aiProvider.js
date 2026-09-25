@@ -25,7 +25,7 @@ export async function callLLM(prompt, provider) {
     // llama-3.3-70b-versatile was deprecated by Groq (shut down Aug 16, 2026).
     // openai/gpt-oss-120b is Groq's official recommended replacement, and also
     // carries a higher free-tier daily token allowance.
-    const r = await fetch('https://api.groq.com/openai/v1/chat/completions', { method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${provider.key}`}, body: JSON.stringify({ model:'openai/gpt-oss-120b', messages:[{role:'user',content:prompt}], temperature:0.7, max_tokens:3000 }) });
+    const r = await fetch('https://api.groq.com/openai/v1/chat/completions', { method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${provider.key}`}, body: JSON.stringify({ model:'qwen/qwen3.8-27b', messages:[{role:'user',content:prompt}], temperature:0.7, max_tokens:3000 }) });
     if (!r.ok) { console.error(`Groq error (${r.status}):`, await r.text()); return null; }
     return (await r.json()).choices?.[0]?.message?.content || '';
   }
