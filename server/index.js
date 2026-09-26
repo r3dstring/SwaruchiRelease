@@ -56,9 +56,20 @@ app.use('/api', (req, res) => {
 // routes uncaught errors here instead of its default HTML error page.
 // This is what was causing "Unexpected token '<'" on the frontend.
 app.use((err, req, res, next) => {
-  console.error('Unhandled error:', err);
+  console.error('Unhandled error:', req.method, req.originalUrl, '-', err);
   if (res.headersSent) return next(err);
-  res.status(err.status || 500).json({ error: err.message || 'Internal server error' });
+
+  // Don't leak internal details (Postgres messages, stack traces, column
+  // names) to the client. Database errors carry a `code` property; those get
+  // a generic message. Errors we raised deliberately with a status are safe
+  // to surface as-is.
+  const isDbError = typeof err.code === 'string' && /^[0-9A-Z]{5}$/.test(err.code);
+  const status = err.status || 500;
+  const safeMessage = (!isDbError && err.status && err.message)
+    ? err.message
+    : (status === 400 ? 'Invalid request' : 'Something went wrong. Please try again.');
+
+  res.status(status).json({ error: safeMessage });
 });
 
 (async () => {

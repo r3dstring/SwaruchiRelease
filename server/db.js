@@ -133,6 +133,11 @@ export async function initDb() {
   // Migrations: add compressed-storage columns to tables created before this change
   await pool.query(`ALTER TABLE pdfs ADD COLUMN IF NOT EXISTS text_gz BYTEA`);
   await pool.query(`ALTER TABLE pdfs ADD COLUMN IF NOT EXISTS chunks_gz BYTEA`);
+  // Pre-generated fallback question pool, built lazily on the first SUCCESSFUL
+  // live generation for a document (never at upload — see fallbackPool.js).
+  // Used only when the entire AI provider chain is exhausted.
+  await pool.query(`ALTER TABLE pdfs ADD COLUMN IF NOT EXISTS fallback_questions TEXT`);
+  await pool.query(`ALTER TABLE pdfs ADD COLUMN IF NOT EXISTS fallback_generated_at TIMESTAMP`);
 
   // Seed the topic tree once, on first run only. Never overwrites admin edits —
   // if the table already has rows (from a prior run or admin changes), skip entirely.

@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { guardRouter } from '../middleware/asyncGuard.js';
 import multer from 'multer';
 import zlib from 'zlib';
 import pdf from 'pdf-parse/lib/pdf-parse.js';
@@ -6,7 +7,19 @@ import { all, get, run } from '../db.js';
 import { authMiddleware, requireAdmin } from '../middleware/auth.js';
 import { chunkText } from '../retrieval.js';
 
-const router = Router();
+// guardRouter: forwards async route rejections to the global error handler
+// instead of letting them crash the Node process.
+const router = guardRouter(Router());
+
+// Validates a route :id param is a positive integer BEFORE it reaches the
+// database. Without this, a non-numeric id produces a Postgres type error;
+// the async guard now prevents that from crashing the process, but returning
+// a clean 400 here is better than a generic 500.
+function parseId(value) {
+  const n = parseInt(value, 10);
+  return Number.isInteger(n) && n > 0 && String(n) === String(value).trim() ? n : null;
+}
+
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_FILE_SIZE } });
 
@@ -74,7 +87,9 @@ router.get('/list', authMiddleware, async (req, res) => {
 
 router.delete('/:id', authMiddleware, requireAdmin, async (req, res) => {
   try {
-    await run('DELETE FROM pdfs WHERE id = ?', [req.params.id]);
+    const pdfId = parseId(req.params.id);
+    if (!pdfId) return res.status(400).json({ error: 'Invalid document id' });
+    await run('DELETE FROM pdfs WHERE id = ?', [pdfId]);
     res.json({ ok: true });
   } catch (e) {
     console.error('Delete error:', e);

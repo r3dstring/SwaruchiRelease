@@ -76,7 +76,7 @@ function weightedSample(items, n) {
 // Decompress a document's chunks, preferring the compressed bytea columns.
 // Falls back to legacy plain-text columns for documents uploaded before
 // gzip storage was introduced, so nothing breaks on already-uploaded PDFs.
-function getChunksForDoc(doc) {
+export function getChunksForDoc(doc) {
   if (doc.chunks_gz) {
     try { return JSON.parse(zlib.gunzipSync(doc.chunks_gz).toString('utf8')); }
     catch { /* fall through */ }

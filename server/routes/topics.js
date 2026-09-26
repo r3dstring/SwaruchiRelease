@@ -1,8 +1,21 @@
 import { Router } from 'express';
+import { guardRouter } from '../middleware/asyncGuard.js';
 import { all, get, run } from '../db.js';
 import { authMiddleware, requireAdmin } from '../middleware/auth.js';
 
-const router = Router();
+// guardRouter: forwards async route rejections to the global error handler
+// instead of letting them crash the Node process.
+const router = guardRouter(Router());
+
+// Validates a route :id param is a positive integer BEFORE it reaches the
+// database. Without this, a non-numeric id produces a Postgres type error;
+// the async guard now prevents that from crashing the process, but returning
+// a clean 400 here is better than a generic 500.
+function parseId(value) {
+  const n = parseInt(value, 10);
+  return Number.isInteger(n) && n > 0 && String(n) === String(value).trim() ? n : null;
+}
+
 
 // GET /api/topics — the full tree, available to any authenticated user
 // (Dashboard's topic picker and Knowledge Map both need this)
@@ -57,7 +70,9 @@ router.post('/admin/leaf', authMiddleware, requireAdmin, async (req, res) => {
 // ── Admin: update a branch or leaf ───────────────────────────
 router.patch('/admin/:id', authMiddleware, requireAdmin, async (req, res) => {
   const { label, icon, keywords } = req.body;
-  const existing = await get('SELECT * FROM topics WHERE id = ?', [req.params.id]);
+  const topicId = parseId(req.params.id);
+  if (!topicId) return res.status(400).json({ error: 'Invalid topic id' });
+  const existing = await get('SELECT * FROM topics WHERE id = ?', [topicId]);
   if (!existing) return res.status(404).json({ error: 'Topic not found' });
 
   const isBranch = existing.parent_id === null;
@@ -69,15 +84,17 @@ router.patch('/admin/:id', authMiddleware, requireAdmin, async (req, res) => {
     newKeywords = JSON.stringify(kwArray);
   }
 
-  await run('UPDATE topics SET label = ?, icon = ?, keywords = ? WHERE id = ?', [newLabel, newIcon, newKeywords, req.params.id]);
+  await run('UPDATE topics SET label = ?, icon = ?, keywords = ? WHERE id = ?', [newLabel, newIcon, newKeywords, topicId]);
   res.json({ ok: true });
 });
 
 // ── Admin: delete a branch (cascades to its leaves) or a leaf ─
 router.delete('/admin/:id', authMiddleware, requireAdmin, async (req, res) => {
-  const existing = await get('SELECT * FROM topics WHERE id = ?', [req.params.id]);
+  const topicId = parseId(req.params.id);
+  if (!topicId) return res.status(400).json({ error: 'Invalid topic id' });
+  const existing = await get('SELECT * FROM topics WHERE id = ?', [topicId]);
   if (!existing) return res.status(404).json({ error: 'Topic not found' });
-  await run('DELETE FROM topics WHERE id = ?', [req.params.id]);
+  await run('DELETE FROM topics WHERE id = ?', [topicId]);
   res.json({ ok: true });
 });
 

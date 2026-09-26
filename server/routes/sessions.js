@@ -1,10 +1,15 @@
 import { Router } from 'express';
+import { guardRouter } from '../middleware/asyncGuard.js';
 import { all, get, run } from '../db.js';
 import { authMiddleware, requireAdmin } from '../middleware/auth.js';
 import { chunkText } from '../retrieval.js';
 import { generateWithFailover } from '../aiProvider.js';
+import { processQuestions } from '../questionUtils.js';
+import { ensureFallbackPool, getFromFallbackPool } from '../fallbackPool.js';
 
-const router = Router();
+// guardRouter: forwards async route rejections to the global error handler
+// instead of letting them crash the Node process.
+const router = guardRouter(Router());
 
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
@@ -133,12 +138,47 @@ router.post('/', authMiddleware, requireAdmin, async (req, res) => {
     const context = chunks.join('\n\n').slice(0, 7000);
     const prompt = buildDocumentQuizPrompt({ context, count: qCount, difficulty: diff, questionTypes: validTypes });
 
-    let questions = await generateWithFailover(prompt, { count: qCount });
-    if (questions) {
-      questions = questions.filter(q => q.type && q.question && q.answer && (q.type === 'fitb' || (Array.isArray(q.options) && q.options.length >= 2))).slice(0, qCount);
+    // Exclude questions already used in this admin's previous sessions on the
+    // SAME document, so running the same assessment twice doesn't produce an
+    // identical paper.
+    const priorSessions = await all(
+      'SELECT questions FROM quiz_sessions WHERE pdf_id = ? AND admin_id = ? ORDER BY created_at DESC LIMIT 5',
+      [pdfId, req.user.id]
+    );
+    const priorTexts = [];
+    for (const row of priorSessions) {
+      try {
+        for (const q of JSON.parse(row.questions)) if (q?.question) priorTexts.push(q.question);
+      } catch { /* skip unparseable */ }
     }
+
+    const raw = await generateWithFailover(prompt, { count: qCount });
+    let questions = null;
+
+    if (raw) {
+      // Validates answer letters are in range, shuffles MCQ options to remove
+      // the model's A/B position bias, and dedupes against prior sessions.
+      const processed = processQuestions(raw, priorTexts);
+      if (processed.length > 0) {
+        questions = processed.slice(0, qCount);
+        // Provider is healthy right now — safe moment to build this document's
+        // fallback pool if it doesn't have one. Fire-and-forget.
+        ensureFallbackPool(pdfId, context, pdf.filename).catch(() => {});
+      }
+    }
+
+    // Every provider failed. Use the pre-generated pool built from this exact
+    // document before resorting to generic placeholders.
+    if (!questions) {
+      const pooled = await getFromFallbackPool(pdfId, qCount, { questionTypes: validTypes, excludeTexts: priorTexts });
+      if (pooled && pooled.length > 0) {
+        questions = pooled;
+        console.log(`[fallback] session used ${pooled.length} pre-generated questions (AI unavailable)`);
+      }
+    }
+
     if (!questions || questions.length === 0) {
-      console.log('Session quiz generation failed - using mock questions');
+      console.log('Session quiz generation failed and no fallback pool available - using mock questions');
       questions = mockDocumentQuiz(qCount, pdf.filename, validTypes);
     }
 

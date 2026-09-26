@@ -1,13 +1,29 @@
 import { Router } from 'express';
+import { guardRouter } from '../middleware/asyncGuard.js';
 import { all, get, run } from '../db.js';
 import { authMiddleware, requireAdmin } from '../middleware/auth.js';
 import { retrieveForTopic } from '../retrieval.js';
 import { getAllProviders, callLLM } from '../aiProvider.js';
+import { processQuestions } from '../questionUtils.js';
+import { ensureFallbackPool, getFromFallbackPoolMulti } from '../fallbackPool.js';
 
-const router = Router();
+// guardRouter: forwards async route rejections to the global error handler
+// instead of letting them crash the Node process.
+const router = guardRouter(Router());
+
+// Validates a route :id param is a positive integer BEFORE it reaches the
+// database. Without this, a non-numeric id produces a Postgres type error;
+// the async guard now prevents that from crashing the process, but returning
+// a clean 400 here is better than a generic 500.
+function parseId(value) {
+  const n = parseInt(value, 10);
+  return Number.isInteger(n) && n > 0 && String(n) === String(value).trim() ? n : null;
+}
+
 const XP_PER_CORRECT = 10;
 const XP_BONUS_PERFECT = 25;
-const HISTORY_EXCLUSION_LIMIT = 12; // trimmed from 20 — less prompt bulk per call, stays effective at avoiding repeats
+const HISTORY_EXCLUSION_LIMIT = 12; // same-topic recent questions fed to the prompt
+const CROSS_TOPIC_EXCLUSION_LIMIT = 10; // recent questions from OTHER topics — documents feed multiple topics, so repeats cross over
 const HISTORY_CAP = 50;
 
 function calcLevel(xp) {
@@ -27,9 +43,33 @@ async function updateStreak(userId) {
 
 function normalizeQ(text) { return (text || '').toLowerCase().replace(/\s+/g, ' ').trim(); }
 
+// Returns questions to exclude from the next generation.
+//
+// Previously this only looked at the CURRENT topic, which meant the same
+// question could be served repeatedly to the same user under different topics
+// (documents feed multiple topics, so overlap is common). Now it pulls the
+// current topic's recent questions AND a broader slice of the user's overall
+// recent history, so repeats are caught across topic boundaries too.
 async function getRecentQuestions(userId, topic) {
-  const rows = await all('SELECT question_text FROM question_history WHERE user_id = ? AND topic = ? ORDER BY asked_at DESC LIMIT ?', [userId, topic || '', HISTORY_EXCLUSION_LIMIT]);
-  return rows.map(r => r.question_text);
+  const sameTopic = await all(
+    'SELECT question_text FROM question_history WHERE user_id = ? AND topic = ? ORDER BY asked_at DESC LIMIT ?',
+    [userId, topic || '', HISTORY_EXCLUSION_LIMIT]
+  );
+  const crossTopic = await all(
+    'SELECT question_text FROM question_history WHERE user_id = ? AND topic != ? ORDER BY asked_at DESC LIMIT ?',
+    [userId, topic || '', CROSS_TOPIC_EXCLUSION_LIMIT]
+  );
+  // Same-topic first: these are the ones the prompt's exclusion list should
+  // prioritise if it gets truncated.
+  const seen = new Set();
+  const out = [];
+  for (const r of [...sameTopic, ...crossTopic]) {
+    const t = r.question_text;
+    if (!t || seen.has(t)) continue;
+    seen.add(t);
+    out.push(t);
+  }
+  return out;
 }
 
 async function logQuestionsToHistory(userId, topic, questions) {
@@ -44,16 +84,9 @@ async function logQuestionsToHistory(userId, topic, questions) {
   }
 }
 
-function similarity(a, b) {
-  const setA = new Set(a.toLowerCase().split(/\W+/).filter(w => w.length > 3));
-  const setB = new Set(b.toLowerCase().split(/\W+/).filter(w => w.length > 3));
-  if (!setA.size || !setB.size) return 0;
-  const inter = [...setA].filter(w => setB.has(w)).length;
-  return inter / (setA.size + setB.size - inter);
-}
-function deduplicateAgainstHistory(questions, history) {
-  return questions.filter(q => { const n = normalizeQ(q.question); return !history.some(h => similarity(n, h) > 0.75); });
-}
+// NOTE: similarity/dedup now live in ../questionUtils.js so quiz.js and
+// sessions.js share one implementation (and one set of fixes). That module
+// also handles MCQ option shuffling and answer validation.
 
 async function getAdaptiveDirective(userId, topic) {
   if (!topic) return '';
@@ -172,13 +205,22 @@ async function generateQuestions(userId, { count, difficulty, topic, topicParent
       if (!responseText) { console.log(`[${provider.name}] no response, trying next provider...`); continue; }
       const match = responseText.match(/\[[\s\S]*\]/);
       if (!match) { console.log(`[${provider.name}] no JSON array in response, trying next provider...`); continue; }
-      let questions = JSON.parse(match[0]);
-      if (!Array.isArray(questions)) { continue; }
-      questions = questions.filter(q => q.type && q.question && q.answer && (q.type === 'fitb' || (Array.isArray(q.options) && q.options.length >= 2)));
-      const deduped = deduplicateAgainstHistory(questions, previousQuestions);
-      const final = deduped.slice(0, count);
+      const parsed = JSON.parse(match[0]);
+      if (!Array.isArray(parsed)) { continue; }
+      // Validates answers are in range, shuffles MCQ options to remove the
+      // model's position bias toward A/B, then dedupes against history.
+      const processed = processQuestions(parsed, previousQuestions);
+      const final = processed.slice(0, count);
       if (final.length === 0) { console.log(`[${provider.name}] all questions filtered out, trying next provider...`); continue; }
       console.log(`[${provider.name}] ${final.length}/${count} questions | topic: ${topic||'general'} | excluded: ${previousQuestions.length} | docs: ${docsReferenced.length}`);
+
+      // This provider is healthy right now, so it's a safe moment to build the
+      // fallback pool for any retrieved document that doesn't have one yet.
+      // Fire-and-forget: never blocks or fails this request.
+      for (const doc of docsReferenced.slice(0, 1)) {
+        ensureFallbackPool(doc.id, context, doc.filename).catch(() => {});
+      }
+
       return { questions: final, docsReferenced };
     } catch (e) {
       console.error(`[${provider.name}] threw an error, trying next provider:`, e.message);
@@ -222,8 +264,31 @@ router.post('/generate', authMiddleware, async (req, res) => {
   if ((docRow?.c || 0) === 0) return res.status(400).json({ error: 'No documents in the knowledge base yet. Ask your admin to upload training material.' });
 
   const { questions: aiQ, docsReferenced } = await generateQuestions(req.user.id, { count: qCount, difficulty: diff, topic, topicParent, consequenceMode: !!consequenceMode, questionTypes: validTypes });
-  const questions = aiQ || generateMockQuestions(topic, validTypes);
-  if (aiQ) await logQuestionsToHistory(req.user.id, topic, questions);
+
+  let questions = aiQ;
+  let usedFallbackPool = false;
+
+  // Every provider failed. Before resorting to generic placeholders, try the
+  // pre-generated pool built from the actual document content.
+  if (!questions) {
+    const previous = await getRecentQuestions(req.user.id, topic);
+    const pooled = await getFromFallbackPoolMulti(
+      (docsReferenced || []).map(d => d.id),
+      qCount,
+      { questionTypes: validTypes, excludeTexts: previous }
+    );
+    if (pooled && pooled.length > 0) {
+      questions = pooled;
+      usedFallbackPool = true;
+      console.log(`[fallback] served ${pooled.length} pre-generated questions (AI unavailable)`);
+    }
+  }
+
+  if (!questions) questions = generateMockQuestions(topic, validTypes);
+
+  // Log to history for both live AND pooled questions, so the pool doesn't
+  // repeat itself across consecutive attempts during a prolonged outage.
+  if (aiQ || usedFallbackPool) await logQuestionsToHistory(req.user.id, topic, questions);
   res.json({ questions, topic, consequenceMode: !!consequenceMode, docsReferenced });
 });
 
@@ -253,16 +318,38 @@ router.post('/submit', authMiddleware, async (req, res) => {
   res.json({ score, total, xpEarned, perfectBonus: score===total, results, user: updatedUser, topic: topic||null, consequenceMode: !!consequenceMode, docsReferenced });
 });
 
+const VALID_FLAG_REASONS = ['wrong_answer', 'confusing', 'not_relevant', 'other'];
+
+// Coerces a value to a trimmed string, or null. Rejects objects/arrays rather
+// than letting JS stringify them into useless "[object Object]" rows.
+function asText(v, maxLen = 2000) {
+  if (v === undefined || v === null) return null;
+  if (typeof v === 'object') return null;
+  const s = String(v).trim();
+  if (!s) return null;
+  return s.slice(0, maxLen);
+}
+
 router.post('/flag', authMiddleware, async (req, res) => {
   const { topic, question_text, question_type, options, correct_answer, explanation, reason, comment } = req.body;
-  if (!question_text || !reason) return res.status(400).json({ error: 'question_text and reason required' });
+
+  const questionText = asText(question_text);
+  const reasonText = asText(reason, 50);
+  if (!questionText || !reasonText) return res.status(400).json({ error: 'question_text and reason required' });
+  if (!VALID_FLAG_REASONS.includes(reasonText)) return res.status(400).json({ error: 'Invalid reason' });
+
   await run('INSERT INTO flagged_questions (user_id, topic, question_text, question_type, options, correct_answer, explanation, reason, comment) VALUES (?,?,?,?,?,?,?,?,?)',
-    [req.user.id, topic||null, question_text, question_type||null, options ? JSON.stringify(options) : null, correct_answer||null, explanation||null, reason, comment||null]);
+    [req.user.id, asText(topic, 200), questionText, asText(question_type, 20),
+     Array.isArray(options) ? JSON.stringify(options.slice(0, 10).map(o => String(o).slice(0, 500))) : null,
+     asText(correct_answer, 500), asText(explanation), reasonText, asText(comment, 1000)]);
   res.json({ ok: true });
 });
 
+const VALID_FLAG_STATUSES = ['open', 'reviewed', 'dismissed'];
+
 router.get('/admin/flags', authMiddleware, requireAdmin, async (req, res) => {
-  const { status = 'open' } = req.query;
+  const requested = req.query.status || 'open';
+  const status = VALID_FLAG_STATUSES.includes(requested) ? requested : 'open';
   const flags = await all('SELECT f.*, u.username as flagged_by FROM flagged_questions f JOIN users u ON f.user_id = u.id WHERE f.status = ? ORDER BY f.flagged_at DESC', [status]);
   const topicSummary = await all("SELECT topic, COUNT(*)::int as count FROM flagged_questions WHERE status = 'open' AND topic IS NOT NULL GROUP BY topic ORDER BY count DESC LIMIT 5");
   const openRow = await get("SELECT COUNT(*)::int as c FROM flagged_questions WHERE status = 'open'");
@@ -272,7 +359,9 @@ router.get('/admin/flags', authMiddleware, requireAdmin, async (req, res) => {
 router.patch('/admin/flags/:id', authMiddleware, requireAdmin, async (req, res) => {
   const { status } = req.body;
   if (!['reviewed','dismissed'].includes(status)) return res.status(400).json({ error: 'status must be reviewed or dismissed' });
-  await run('UPDATE flagged_questions SET status=?, reviewed_at=? WHERE id=?', [status, new Date().toISOString(), req.params.id]);
+  const flagId = parseId(req.params.id);
+  if (!flagId) return res.status(400).json({ error: 'Invalid flag id' });
+  await run('UPDATE flagged_questions SET status=?, reviewed_at=? WHERE id=?', [status, new Date().toISOString(), flagId]);
   res.json({ ok: true });
 });
 

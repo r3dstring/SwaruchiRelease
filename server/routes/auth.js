@@ -1,9 +1,12 @@
 import { Router } from 'express';
+import { guardRouter } from '../middleware/asyncGuard.js';
 import bcrypt from 'bcryptjs';
 import { get, run } from '../db.js';
 import { generateToken, authMiddleware } from '../middleware/auth.js';
 
-const router = Router();
+// guardRouter: forwards async route rejections to the global error handler
+// instead of letting them crash the Node process.
+const router = guardRouter(Router());
 
 router.post('/signup', async (req, res) => {
   const { username, email, password } = req.body;
