@@ -3,7 +3,7 @@ import { guardRouter } from '../middleware/asyncGuard.js';
 import { all, get, run } from '../db.js';
 import { authMiddleware, requireAdmin } from '../middleware/auth.js';
 import { retrieveForTopic } from '../retrieval.js';
-import { getAllProviders, callLLM } from '../aiProvider.js';
+import { getAllProviders, callLLM, extractQuestionArray } from '../aiProvider.js';
 import { processQuestions } from '../questionUtils.js';
 import { ensureFallbackPool, getFromFallbackPoolMulti } from '../fallbackPool.js';
 
@@ -201,12 +201,13 @@ async function generateQuestions(userId, { count, difficulty, topic, topicParent
   // to mock questions — this is what makes a single provider going down non-fatal.
   for (const provider of providers) {
     try {
-      const responseText = await callLLM(prompt, provider);
-      if (!responseText) { console.log(`[${provider.name}] no response, trying next provider...`); continue; }
-      const match = responseText.match(/\[[\s\S]*\]/);
-      if (!match) { console.log(`[${provider.name}] no JSON array in response, trying next provider...`); continue; }
-      const parsed = JSON.parse(match[0]);
-      if (!Array.isArray(parsed)) { continue; }
+      // count is passed through so max_tokens actually scales to the request
+      // size (see computeMaxTokens in aiProvider.js) — this was previously
+      // omitted here, which was the direct cause of truncated-JSON failures
+      // on larger question counts for this specific code path.
+      const responseText = await callLLM(prompt, provider, count);
+      const parsed = extractQuestionArray(responseText, provider.name);
+      if (!parsed) continue;
       // Validates answers are in range, shuffles MCQ options to remove the
       // model's position bias toward A/B, then dedupes against history.
       const processed = processQuestions(parsed, previousQuestions);

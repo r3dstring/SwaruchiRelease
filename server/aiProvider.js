@@ -9,11 +9,18 @@
 // when qwen3.8-27b's 30 req/min is used up, gpt-oss-20b's separate 30 req/min
 // is still untouched. Each entry below is tried in order as its own failover
 // step, reusing the existing generateWithFailover loop with no changes there.
+// Ordered by REAL observed output-token headroom, not the dashboard's general
+// TPM column. Live error logs showed qwen/qwen3.8-27b enforces a separate,
+// much stricter "output tokens per minute" (OTPM) sub-limit of just 1000 -
+// invisible in the RPM/TPM table - so it was failing almost every request
+// with more than a handful of questions. gpt-oss-120b/20b confirmed the full
+// 8000 TPM from the table; allam-2-7b confirmed 6000. qwen is kept as a last
+// resort (still useful for small requests) rather than removed entirely.
 const GROQ_MODEL_CASCADE = [
-  'qwen/qwen3.8-27b',
-  'openai/gpt-oss-20b',
   'openai/gpt-oss-120b',
+  'openai/gpt-oss-20b',
   'allam-2-7b',
+  'qwen/qwen3.8-27b',
 ];
 
 export function getAllProviders() {
@@ -55,20 +62,36 @@ export function getAllProviders() {
   return providers;
 }
 
-export async function callLLM(prompt, provider) {
+// Live logs showed "Expected ',' or '}' after property value in JSON" on
+// MULTIPLE providers (gpt-oss-20b, gpt-oss-120b, allam-2-7b, OpenRouter) -
+// the exact signature of a response cut off mid-value before the JSON array
+// closed. Root cause: max_tokens was a fixed 3000 regardless of how many
+// questions were requested. A 20-question quiz with full explanations
+// routinely needs more than that; a 5-question one doesn't need nearly as
+// much. This scales the ceiling to the actual request, with a floor so small
+// requests still get comfortable headroom and a cap so one call can't eat an
+// entire model's per-minute token budget by itself.
+function computeMaxTokens(count) {
+  const n = count || 10;
+  return Math.min(6000, Math.max(1200, n * 170 + 400));
+}
+
+export async function callLLM(prompt, provider, count) {
+  const maxTokens = computeMaxTokens(count);
+
   if (provider.type === 'groq') {
-    const r = await fetch('https://api.groq.com/openai/v1/chat/completions', { method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${provider.key}`}, body: JSON.stringify({ model: provider.model, messages:[{role:'user',content:prompt}], temperature:0.7, max_tokens:3000 }) });
+    const r = await fetch('https://api.groq.com/openai/v1/chat/completions', { method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${provider.key}`}, body: JSON.stringify({ model: provider.model, messages:[{role:'user',content:prompt}], temperature:0.7, max_tokens: maxTokens }) });
     if (!r.ok) { console.error(`Groq/${provider.model} error (${r.status}):`, await r.text()); return null; }
     return (await r.json()).choices?.[0]?.message?.content || '';
   }
   if (provider.type === 'gemini') {
-    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${provider.key}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ contents:[{parts:[{text:prompt}]}], generationConfig:{temperature:0.7,maxOutputTokens:3000} }) });
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${provider.key}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ contents:[{parts:[{text:prompt}]}], generationConfig:{temperature:0.7,maxOutputTokens:maxTokens} }) });
     if (!r.ok) { console.error(`Gemini error (${r.status}):`, await r.text()); return null; }
     return (await r.json()).candidates?.[0]?.content?.parts?.[0]?.text || '';
   }
   if (provider.type === 'mistral') {
     // "open-mistral-nemo" is on Mistral's free "Experiment" tier.
-    const r = await fetch('https://api.mistral.ai/v1/chat/completions', { method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${provider.key}`}, body: JSON.stringify({ model:'open-mistral-nemo', messages:[{role:'user',content:prompt}], temperature:0.7, max_tokens:3000 }) });
+    const r = await fetch('https://api.mistral.ai/v1/chat/completions', { method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${provider.key}`}, body: JSON.stringify({ model:'open-mistral-nemo', messages:[{role:'user',content:prompt}], temperature:0.7, max_tokens: maxTokens }) });
     if (!r.ok) { console.error(`Mistral error (${r.status}):`, await r.text()); return null; }
     return (await r.json()).choices?.[0]?.message?.content || '';
   }
@@ -84,18 +107,18 @@ export async function callLLM(prompt, provider) {
         'HTTP-Referer': 'https://swaruchi-app.pages.dev',
         'X-Title': 'Swaruchi (HRRL)',
       },
-      body: JSON.stringify({ model: 'openrouter/free', messages: [{ role: 'user', content: prompt }], temperature: 0.7, max_tokens: 3000 }),
+      body: JSON.stringify({ model: 'openrouter/free', messages: [{ role: 'user', content: prompt }], temperature: 0.7, max_tokens: maxTokens }),
     });
     if (!r.ok) { console.error(`OpenRouter error (${r.status}):`, await r.text()); return null; }
     return (await r.json()).choices?.[0]?.message?.content || '';
   }
   if (provider.type === 'anthropic') {
-    const r = await fetch('https://api.anthropic.com/v1/messages', { method:'POST', headers:{'Content-Type':'application/json','x-api-key':provider.key,'anthropic-version':'2023-06-01'}, body: JSON.stringify({ model:'claude-sonnet-4-6', max_tokens:3000, messages:[{role:'user',content:prompt}] }) });
+    const r = await fetch('https://api.anthropic.com/v1/messages', { method:'POST', headers:{'Content-Type':'application/json','x-api-key':provider.key,'anthropic-version':'2023-06-01'}, body: JSON.stringify({ model:'claude-sonnet-4-6', max_tokens: maxTokens, messages:[{role:'user',content:prompt}] }) });
     if (!r.ok) { console.error(`Anthropic error (${r.status}):`, await r.text()); return null; }
     return (await r.json()).content?.[0]?.text || '';
   }
   if (provider.type === 'cerebras') {
-    const r = await fetch('https://api.cerebras.ai/v1/chat/completions', { method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${provider.key}`}, body: JSON.stringify({ model:'llama-3.3-70b', messages:[{role:'user',content:prompt}], temperature:0.7, max_tokens:3000 }) });
+    const r = await fetch('https://api.cerebras.ai/v1/chat/completions', { method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${provider.key}`}, body: JSON.stringify({ model:'llama-3.3-70b', messages:[{role:'user',content:prompt}], temperature:0.7, max_tokens: maxTokens }) });
     if (!r.ok) { console.error(`Cerebras error (${r.status}):`, await r.text()); return null; }
     return (await r.json()).choices?.[0]?.message?.content || '';
   }
@@ -105,16 +128,59 @@ export async function callLLM(prompt, provider) {
 // Tries every configured provider in order until one returns a usable JSON
 // array. Returns null only if every provider fails — callers decide their own
 // mock-question fallback.
+// Previews raw model output in logs on failure. Without this, "no JSON array
+// in response" gives no way to tell whether the model refused, returned
+// empty content, wrapped the array in markdown fences, or something else
+// entirely — exactly the gap that made an OpenRouter failure undiagnosable.
+export function preview(text, max = 300) {
+  if (!text) return '(empty)';
+  const t = text.trim();
+  if (!t) return '(whitespace only)';
+  return t.length > max ? t.slice(0, max) + `... [${t.length} chars total]` : t;
+}
+
+// Extracts and validates a JSON array of question objects from a model's raw
+// text output. Shared by generateWithFailover below AND routes/quiz.js's own
+// provider loop, so a fix here applies everywhere instead of needing to be
+// made twice (which is exactly how the max_tokens/model-order bugs in this
+// file went unfixed in quiz.js's separate copy for as long as they did).
+//
+// The regex requires an object immediately inside the brackets (`[{...}]`),
+// not just any two square brackets anywhere in the text. Live logs showed a
+// weaker model emit stray bracket notation like "[objective]" as part of its
+// prose, which the old bare `/\[[\s\S]*\]/` regex happily grabbed and then
+// failed to parse as JSON.
+export function extractQuestionArray(responseText, providerName) {
+  if (!responseText) {
+    console.log(`[${providerName}] no response, trying next provider...`);
+    return null;
+  }
+  const match = responseText.match(/\[\s*\{[\s\S]*\}\s*\]/);
+  if (!match) {
+    console.log(`[${providerName}] no JSON array in response, trying next provider... raw output: ${preview(responseText)}`);
+    return null;
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(match[0]);
+  } catch (parseErr) {
+    console.log(`[${providerName}] found bracketed text but it wasn't valid JSON (${parseErr.message}), trying next provider... matched text: ${preview(match[0])}`);
+    return null;
+  }
+  if (!Array.isArray(parsed)) {
+    console.log(`[${providerName}] parsed JSON but it wasn't an array, trying next provider... got: ${preview(JSON.stringify(parsed))}`);
+    return null;
+  }
+  return parsed;
+}
+
 export async function generateWithFailover(prompt, { count } = {}) {
   const providers = getAllProviders();
   for (const provider of providers) {
     try {
-      const responseText = await callLLM(prompt, provider);
-      if (!responseText) { console.log(`[${provider.name}] no response, trying next provider...`); continue; }
-      const match = responseText.match(/\[[\s\S]*\]/);
-      if (!match) { console.log(`[${provider.name}] no JSON array in response, trying next provider...`); continue; }
-      const parsed = JSON.parse(match[0]);
-      if (!Array.isArray(parsed)) continue;
+      const responseText = await callLLM(prompt, provider, count);
+      const parsed = extractQuestionArray(responseText, provider.name);
+      if (!parsed) continue;
       console.log(`[${provider.name}] generated ${parsed.length} items`);
       return parsed;
     } catch (e) {
