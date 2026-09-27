@@ -11,6 +11,35 @@ if (!connectionString) {
 const pool = new Pool({
   connectionString,
   ssl: connectionString && connectionString.includes('localhost') ? false : { rejectUnauthorized: false },
+
+  // node-postgres defaults to max:10 with NO connection timeout, which means
+  // once all 10 are busy, further requests queue indefinitely rather than
+  // failing fast. Measured under simulated Neon latency (30ms/query, 6 queries
+  // per participant), 500 concurrent Custom Quiz participants took 9.3s at
+  // max:10 versus 2.0s at max:50.
+  //
+  // 50 is safe headroom: Neon's free tier (0.25 CU) allows 97 direct
+  // connections to the application. Override with DB_POOL_MAX if you move to
+  // a different database or add a second backend instance sharing the same DB.
+  max: parseInt(process.env.DB_POOL_MAX || '50', 10),
+
+  // Fail fast instead of hanging forever when the pool is saturated. A request
+  // that can't get a connection in 10s is already a bad experience; surfacing
+  // it as an error beats an indefinite spinner, and the global error handler
+  // turns it into a clean 500 rather than a crash.
+  connectionTimeoutMillis: 10_000,
+
+  // Release idle connections rather than holding them open against Neon's
+  // connection budget during quiet periods.
+  idleTimeoutMillis: 30_000,
+});
+
+// A pool-level error (e.g. Neon dropping an idle connection) is emitted on the
+// pool itself, NOT on any individual query. Without this listener Node treats
+// it as an unhandled 'error' event and terminates the process — the same class
+// of whole-server crash already fixed for async routes.
+pool.on('error', (err) => {
+  console.error('Postgres pool error (connection dropped or backend restarted):', err.message);
 });
 
 // Postgres uses $1, $2 placeholders instead of ?. This helper converts ? to $n
@@ -138,6 +167,27 @@ export async function initDb() {
   // Used only when the entire AI provider chain is exhausted.
   await pool.query(`ALTER TABLE pdfs ADD COLUMN IF NOT EXISTS fallback_questions TEXT`);
   await pool.query(`ALTER TABLE pdfs ADD COLUMN IF NOT EXISTS fallback_generated_at TIMESTAMP`);
+
+  // ---------------------------------------------------------------------
+  // INDEXES
+  // ---------------------------------------------------------------------
+  // The schema previously had no indexes beyond primary keys and the implicit
+  // ones Postgres creates for UNIQUE constraints. Every lookup filtering by
+  // user_id, admin_id, or status was therefore a sequential scan of the whole
+  // table. That's invisible with a handful of rows and progressively worse as
+  // data accumulates — question_history in particular grows to 50 rows per
+  // user per topic and is read on EVERY quiz generation.
+  //
+  // Already covered by existing UNIQUE constraints (no index needed here):
+  //   users(username), users(email), topic_progress(user_id, topic),
+  //   quiz_sessions(join_code), session_participants(session_id, employee_id)
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_question_history_user_topic ON question_history (user_id, topic, asked_at DESC)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_quizzes_user ON quizzes (user_id, completed_at DESC)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_quiz_sessions_admin ON quiz_sessions (admin_id, created_at DESC)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_quiz_sessions_pdf ON quiz_sessions (pdf_id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_flagged_status ON flagged_questions (status, flagged_at DESC)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_topic_progress_user ON topic_progress (user_id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_topics_parent ON topics (parent_id, sort_order)`);
 
   // Seed the topic tree once, on first run only. Never overwrites admin edits —
   // if the table already has rows (from a prior run or admin changes), skip entirely.

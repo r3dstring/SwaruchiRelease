@@ -72,16 +72,41 @@ async function getRecentQuestions(userId, topic) {
   return out;
 }
 
+// Batched. The previous version issued one DELETE per over-cap row and one
+// INSERT per question, all sequentially — up to 41 round-trips for a
+// 20-question quiz, which at Neon's ~30ms latency added over a second to
+// every single generation purely for bookkeeping. Now it's 3 queries total,
+// regardless of question count.
 async function logQuestionsToHistory(userId, topic, questions) {
   if (!questions?.length) return;
-  const existing = await all('SELECT id FROM question_history WHERE user_id = ? AND topic = ? ORDER BY asked_at DESC', [userId, topic || '']);
-  if (existing.length >= HISTORY_CAP) {
-    const toDelete = existing.slice(HISTORY_CAP - questions.length);
-    for (const r of toDelete) await run('DELETE FROM question_history WHERE id = ?', [r.id]);
-  }
+  const topicKey = topic || '';
+
+  // Prune in ONE statement instead of N: keep the most recent
+  // (HISTORY_CAP - incoming) rows, delete anything older.
+  const keepCount = Math.max(0, HISTORY_CAP - questions.length);
+  await run(
+    `DELETE FROM question_history
+     WHERE user_id = ? AND topic = ?
+       AND id NOT IN (
+         SELECT id FROM question_history
+         WHERE user_id = ? AND topic = ?
+         ORDER BY asked_at DESC
+         LIMIT ?
+       )`,
+    [userId, topicKey, userId, topicKey, keepCount]
+  );
+
+  // Multi-row INSERT in ONE statement instead of N.
+  const values = [];
+  const placeholders = [];
   for (const q of questions) {
-    await run('INSERT INTO question_history (user_id, topic, question_text, question_type) VALUES (?, ?, ?, ?)', [userId, topic || '', normalizeQ(q.question), q.type]);
+    placeholders.push('(?, ?, ?, ?)');
+    values.push(userId, topicKey, normalizeQ(q.question), q.type);
   }
+  await run(
+    `INSERT INTO question_history (user_id, topic, question_text, question_type) VALUES ${placeholders.join(', ')}`,
+    values
+  );
 }
 
 // NOTE: similarity/dedup now live in ../questionUtils.js so quiz.js and

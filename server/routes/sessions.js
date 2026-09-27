@@ -6,6 +6,7 @@ import { chunkText } from '../retrieval.js';
 import { generateWithFailover } from '../aiProvider.js';
 import { processQuestions } from '../questionUtils.js';
 import { ensureFallbackPool, getFromFallbackPool } from '../fallbackPool.js';
+import { buildParticipantView, stripAnswers } from '../participantShuffle.js';
 
 // guardRouter: forwards async route rejections to the global error handler
 // instead of letting them crash the Node process.
@@ -316,10 +317,13 @@ router.post('/public/join', async (req, res) => {
       participantId = result.lastInsertRowid;
     }
 
+    // Each participant gets their own question order and their own option
+    // order, exam-style, derived deterministically from their participant id
+    // so the exact same layout can be rebuilt at scoring time.
     const questions = JSON.parse(session.questions);
-    const questionsForParticipant = questions.map(({ answer, explanation, ...q }) => q);
+    const view = buildParticipantView(questions, participantId);
 
-    res.json({ participant_id: participantId, session_name: session.session_name, questions: questionsForParticipant });
+    res.json({ participant_id: participantId, session_name: session.session_name, questions: stripAnswers(view) });
   } catch (e) {
     console.error('Session join error:', e);
     res.status(500).json({ error: 'Failed to join quiz' });
@@ -337,7 +341,14 @@ router.post('/public/submit', async (req, res) => {
     if (participant.completed_at) return res.status(409).json({ error: 'This quiz has already been submitted' });
 
     const session = await get('SELECT * FROM quiz_sessions WHERE id = ?', [participant.session_id]);
-    const questions = JSON.parse(session.questions);
+    const canonical = JSON.parse(session.questions);
+
+    // CRITICAL: score against THIS participant's shuffled view, not the
+    // canonical order. Their answers array is positioned against the layout
+    // they actually saw at join time. buildParticipantView is deterministic
+    // on participant id, so this reproduces that exact layout — including the
+    // per-question option order and its remapped answer key.
+    const questions = buildParticipantView(canonical, participantId);
 
     let score = 0;
     const total = questions.length;

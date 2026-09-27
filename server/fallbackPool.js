@@ -151,13 +151,30 @@ export async function getFromFallbackPoolMulti(pdfIds, count, opts = {}) {
   }
   if (pdfIds.length === 0) return null;
 
+  // Fetch every candidate pool in ONE query rather than a sequential
+  // round-trip per document. This runs only when AI generation already
+  // failed, so its latency is felt directly by the waiting user.
+  const placeholders = pdfIds.map(() => '?').join(', ');
+  const rows = await all(
+    `SELECT id, fallback_questions FROM pdfs WHERE id IN (${placeholders}) AND fallback_questions IS NOT NULL`,
+    pdfIds
+  );
+
   const collected = [];
-  for (const id of pdfIds) {
-    const got = await getFromFallbackPool(id, count, opts);
-    if (got) collected.push(...got);
-    if (collected.length >= count * 2) break;
+  for (const row of rows) {
+    try {
+      const pool = JSON.parse(row.fallback_questions);
+      if (Array.isArray(pool)) collected.push(...pool);
+    } catch { /* skip unparseable pool */ }
   }
   if (collected.length === 0) return null;
+
+  // Apply type filtering and history dedup across the combined set, matching
+  // what getFromFallbackPool does for the single-document case.
+  if (opts.questionTypes && opts.questionTypes.length > 0) {
+    const filtered = collected.filter(q => opts.questionTypes.includes(q.type));
+    if (filtered.length > 0) collected.length = 0, collected.push(...filtered);
+  }
 
   const shuffled = [...collected];
   for (let i = shuffled.length - 1; i > 0; i--) {
