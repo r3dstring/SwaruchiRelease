@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import { initDb } from './db.js';
+import { getAllProviders } from './aiProvider.js';
 import authRoutes from './routes/auth.js';
 import pdfRoutes from './routes/pdf.js';
 import quizRoutes from './routes/quiz.js';
@@ -36,13 +37,12 @@ app.use('/api/quiz', quizRoutes);
 app.use('/api/topics', topicsRoutes);
 app.use('/api/sessions', sessionsRoutes);
 
+// Reuses the actual provider list from aiProvider.js rather than maintaining
+// a second copy of the same detection logic — the previous duplicate here had
+// already drifted out of sync with the real chain (it showed a single "Groq"
+// entry even after Groq became a 4-model cascade with independent quotas).
 function detectProviders() {
-  const list = [];
-  if (process.env.CEREBRAS_API_KEY) list.push('Cerebras');
-  if (process.env.OPENROUTER_API_KEY) list.push('OpenRouter');
-  if (process.env.GEMINI_API_KEY) list.push(process.env.GEMINI_API_KEY.startsWith('gsk_') ? 'Groq' : 'Gemini');
-  if (process.env.ANTHROPIC_API_KEY) list.push('Anthropic');
-  return list;
+  return getAllProviders().map(p => p.name);
 }
 
 app.get('/api/health', (_, res) => res.json({ status: 'ok', providers: detectProviders() }));

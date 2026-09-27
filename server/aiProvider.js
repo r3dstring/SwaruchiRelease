@@ -3,30 +3,73 @@
 // (routes/sessions.js). Keeping this in one place means a fix like the Groq
 // model rename only has to happen once.
 
+// Groq enforces rate limits PER MODEL, not per account — so one Groq key can
+// yield several independent free quotas just by trying different models.
+// This directly addresses concurrent users exhausting a single shared quota:
+// when qwen3.8-27b's 30 req/min is used up, gpt-oss-20b's separate 30 req/min
+// is still untouched. Each entry below is tried in order as its own failover
+// step, reusing the existing generateWithFailover loop with no changes there.
+const GROQ_MODEL_CASCADE = [
+  'qwen/qwen3.8-27b',
+  'openai/gpt-oss-20b',
+  'openai/gpt-oss-120b',
+  'allam-2-7b',
+];
+
 export function getAllProviders() {
   const providers = [];
-  if (process.env.CEREBRAS_API_KEY) providers.push({ name: 'Cerebras', key: process.env.CEREBRAS_API_KEY, type: 'cerebras' });
-  if (process.env.OPENROUTER_API_KEY) providers.push({ name: 'OpenRouter', key: process.env.OPENROUTER_API_KEY, type: 'openrouter' });
-  if (process.env.GEMINI_API_KEY) {
-    const k = process.env.GEMINI_API_KEY;
-    providers.push(k.startsWith('gsk_') ? { name: 'Groq', key: k, type: 'groq' } : { name: 'Gemini', key: k, type: 'gemini' });
+
+  // Groq key resolution, backward-compatible with the original single-slot
+  // setup so existing Render deployments keep working with zero required
+  // changes:
+  //   1. GROQ_API_KEY, if set, is used directly (the upgrade path).
+  //   2. Otherwise, if GEMINI_API_KEY looks like a Groq key (starts with
+  //      "gsk_"), it's used as Groq — this is exactly the original behavior,
+  //      preserved so nothing breaks if Render env vars aren't touched.
+  const groqKey = process.env.GROQ_API_KEY
+    || (process.env.GEMINI_API_KEY?.startsWith('gsk_') ? process.env.GEMINI_API_KEY : null);
+
+  if (groqKey) {
+    for (const model of GROQ_MODEL_CASCADE) {
+      providers.push({ name: `Groq (${model})`, key: groqKey, type: 'groq', model });
+    }
   }
+
+  // GEMINI_API_KEY is used for Gemini only when it does NOT look like a Groq
+  // key — this is unchanged from before, so a genuine Gemini key in this slot
+  // still works exactly as it always did.
+  if (process.env.GEMINI_API_KEY && !process.env.GEMINI_API_KEY.startsWith('gsk_')) {
+    providers.push({ name: 'Gemini', key: process.env.GEMINI_API_KEY, type: 'gemini' });
+  }
+
+  if (process.env.MISTRAL_API_KEY) providers.push({ name: 'Mistral', key: process.env.MISTRAL_API_KEY, type: 'mistral' });
+  if (process.env.OPENROUTER_API_KEY) providers.push({ name: 'OpenRouter', key: process.env.OPENROUTER_API_KEY, type: 'openrouter' });
   if (process.env.ANTHROPIC_API_KEY) providers.push({ name: 'Anthropic', key: process.env.ANTHROPIC_API_KEY, type: 'anthropic' });
+
+  // Cerebras's no-card free tier is gone (now a paid $5 trial) — kept as an
+  // absolute last resort in case a paid key is ever added, but no longer
+  // tried early where it would waste a round-trip on every single generation
+  // for accounts that still have this env var set from before.
+  if (process.env.CEREBRAS_API_KEY) providers.push({ name: 'Cerebras', key: process.env.CEREBRAS_API_KEY, type: 'cerebras' });
+
   return providers;
 }
 
 export async function callLLM(prompt, provider) {
-  if (provider.type === 'cerebras') {
-    const r = await fetch('https://api.cerebras.ai/v1/chat/completions', { method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${provider.key}`}, body: JSON.stringify({ model:'llama-3.3-70b', messages:[{role:'user',content:prompt}], temperature:0.7, max_tokens:3000 }) });
-    if (!r.ok) { console.error(`Cerebras error (${r.status}):`, await r.text()); return null; }
+  if (provider.type === 'groq') {
+    const r = await fetch('https://api.groq.com/openai/v1/chat/completions', { method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${provider.key}`}, body: JSON.stringify({ model: provider.model, messages:[{role:'user',content:prompt}], temperature:0.7, max_tokens:3000 }) });
+    if (!r.ok) { console.error(`Groq/${provider.model} error (${r.status}):`, await r.text()); return null; }
     return (await r.json()).choices?.[0]?.message?.content || '';
   }
-  if (provider.type === 'groq') {
-    // llama-3.3-70b-versatile was deprecated by Groq (shut down Aug 16, 2026).
-    // openai/gpt-oss-120b is Groq's official recommended replacement, and also
-    // carries a higher free-tier daily token allowance.
-    const r = await fetch('https://api.groq.com/openai/v1/chat/completions', { method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${provider.key}`}, body: JSON.stringify({ model:'qwen/qwen3.8-27b', messages:[{role:'user',content:prompt}], temperature:0.7, max_tokens:3000 }) });
-    if (!r.ok) { console.error(`Groq error (${r.status}):`, await r.text()); return null; }
+  if (provider.type === 'gemini') {
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${provider.key}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ contents:[{parts:[{text:prompt}]}], generationConfig:{temperature:0.7,maxOutputTokens:3000} }) });
+    if (!r.ok) { console.error(`Gemini error (${r.status}):`, await r.text()); return null; }
+    return (await r.json()).candidates?.[0]?.content?.parts?.[0]?.text || '';
+  }
+  if (provider.type === 'mistral') {
+    // "open-mistral-nemo" is on Mistral's free "Experiment" tier.
+    const r = await fetch('https://api.mistral.ai/v1/chat/completions', { method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${provider.key}`}, body: JSON.stringify({ model:'open-mistral-nemo', messages:[{role:'user',content:prompt}], temperature:0.7, max_tokens:3000 }) });
+    if (!r.ok) { console.error(`Mistral error (${r.status}):`, await r.text()); return null; }
     return (await r.json()).choices?.[0]?.message?.content || '';
   }
   if (provider.type === 'openrouter') {
@@ -46,15 +89,15 @@ export async function callLLM(prompt, provider) {
     if (!r.ok) { console.error(`OpenRouter error (${r.status}):`, await r.text()); return null; }
     return (await r.json()).choices?.[0]?.message?.content || '';
   }
-  if (provider.type === 'gemini') {
-    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${provider.key}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ contents:[{parts:[{text:prompt}]}], generationConfig:{temperature:0.7,maxOutputTokens:3000} }) });
-    if (!r.ok) { console.error(`Gemini error (${r.status}):`, await r.text()); return null; }
-    return (await r.json()).candidates?.[0]?.content?.parts?.[0]?.text || '';
-  }
   if (provider.type === 'anthropic') {
     const r = await fetch('https://api.anthropic.com/v1/messages', { method:'POST', headers:{'Content-Type':'application/json','x-api-key':provider.key,'anthropic-version':'2023-06-01'}, body: JSON.stringify({ model:'claude-sonnet-4-6', max_tokens:3000, messages:[{role:'user',content:prompt}] }) });
     if (!r.ok) { console.error(`Anthropic error (${r.status}):`, await r.text()); return null; }
     return (await r.json()).content?.[0]?.text || '';
+  }
+  if (provider.type === 'cerebras') {
+    const r = await fetch('https://api.cerebras.ai/v1/chat/completions', { method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${provider.key}`}, body: JSON.stringify({ model:'llama-3.3-70b', messages:[{role:'user',content:prompt}], temperature:0.7, max_tokens:3000 }) });
+    if (!r.ok) { console.error(`Cerebras error (${r.status}):`, await r.text()); return null; }
+    return (await r.json()).choices?.[0]?.message?.content || '';
   }
   return null;
 }

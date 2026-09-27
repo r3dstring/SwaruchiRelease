@@ -76,20 +76,35 @@ function weightedSample(items, n) {
 // Decompress a document's chunks, preferring the compressed bytea columns.
 // Falls back to legacy plain-text columns for documents uploaded before
 // gzip storage was introduced, so nothing breaks on already-uploaded PDFs.
+// Decompressed-chunk cache, keyed by document id. Previously every quiz
+// generation call synchronously re-decompressed EVERY document's chunks from
+// scratch (gunzipSync is blocking, CPU-bound work on Node's single thread) —
+// under concurrent requests this effectively serialized users against each
+// other even though the surrounding I/O was async. Safe with no invalidation
+// logic: document content is never updated in place after insert, only
+// re-uploaded as a new row with a new id (see routes/pdf.js).
+const chunkCache = new Map();
+
 export function getChunksForDoc(doc) {
+  if (chunkCache.has(doc.id)) return chunkCache.get(doc.id);
+
+  let chunks;
   if (doc.chunks_gz) {
-    try { return JSON.parse(zlib.gunzipSync(doc.chunks_gz).toString('utf8')); }
+    try { chunks = JSON.parse(zlib.gunzipSync(doc.chunks_gz).toString('utf8')); }
     catch { /* fall through */ }
   }
-  if (doc.chunks) {
-    try { return JSON.parse(doc.chunks); }
+  if (!chunks && doc.chunks) {
+    try { chunks = JSON.parse(doc.chunks); }
     catch { /* fall through */ }
   }
-  if (doc.text_gz) {
-    try { return chunkText(zlib.gunzipSync(doc.text_gz).toString('utf8')); }
+  if (!chunks && doc.text_gz) {
+    try { chunks = chunkText(zlib.gunzipSync(doc.text_gz).toString('utf8')); }
     catch { /* fall through */ }
   }
-  return chunkText(doc.text_content || '');
+  if (!chunks) chunks = chunkText(doc.text_content || '');
+
+  if (doc.id !== undefined) chunkCache.set(doc.id, chunks);
+  return chunks;
 }
 
 // userId param removed — all users share the same knowledge base (admin-managed)
