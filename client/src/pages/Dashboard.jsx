@@ -200,7 +200,7 @@ export default function Dashboard({ onStartQuiz }) {
           <p className="text-sm text-gray-400">{pdfs.length>0?`Quizzes draw from all ${pdfs.length} document${pdfs.length!==1?'s':''} in the knowledge base`:'No documents yet — ask your admin to upload training material'}</p>
         </div>
         <button onClick={()=>openSettings()} disabled={pdfs.length===0} className="bg-lime-500 hover:bg-lime-600 text-white font-semibold px-6 py-2.5 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed shrink-0 flex items-center gap-2">
-          <Rocket size={16} /> Start Quiz
+          <Rocket size={16} /> Start Learning
         </button>
       </div>
 
