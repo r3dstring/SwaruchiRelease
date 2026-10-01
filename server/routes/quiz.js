@@ -230,7 +230,7 @@ async function generateQuestions(userId, { count, difficulty, topic, topicParent
       // size (see computeMaxTokens in aiProvider.js) — this was previously
       // omitted here, which was the direct cause of truncated-JSON failures
       // on larger question counts for this specific code path.
-      const responseText = await callLLM(prompt, provider, count);
+      const responseText = await callLLM(prompt, provider, count, consequenceMode);
       const parsed = extractQuestionArray(responseText, provider.name);
       if (!parsed) continue;
       // Validates answers are in range, shuffles MCQ options to remove the

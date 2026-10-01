@@ -71,28 +71,120 @@ export function getAllProviders() {
 // much. This scales the ceiling to the actual request, with a floor so small
 // requests still get comfortable headroom and a cap so one call can't eat an
 // entire model's per-minute token budget by itself.
-function computeMaxTokens(count) {
+//
+// Scenario (consequence) mode is budgeted separately: those questions carry
+// a full situational setup in the stem, full-sentence options, and a 2-3
+// sentence explanation. A live log showed a single scenario question
+// truncated at 2388 characters and STILL incomplete — real per-question cost
+// is 600-900+ tokens, far above the ~170 assumed for regular mode.
+function computeMaxTokens(count, consequenceMode) {
   const n = count || 10;
+  if (consequenceMode) {
+    // 7500 stays just under the 8000 TPM ceiling Groq's own error responses
+    // have confirmed for the higher-capacity models, leaving headroom so
+    // this doesn't also trigger a TPM rate-limit on top of truncation.
+    return Math.min(7500, Math.max(2500, n * 600 + 500));
+  }
   return Math.min(6000, Math.max(1200, n * 170 + 400));
 }
 
-export async function callLLM(prompt, provider, count) {
-  const maxTokens = computeMaxTokens(count);
+// ---------------------------------------------------------------------------
+// RATE-LIMIT COOLDOWN CACHE
+// ---------------------------------------------------------------------------
+// Live logs showed the same model failing with 429 repeatedly across several
+// requests within the same short window — e.g. qwen hit 429 five times in a
+// row within about 90 seconds, each attempt costing a real network round-trip
+// before moving on. Groq's error body tells us exactly how long to wait
+// ("Please try again in 41.76s"). Remembering that and skipping the model
+// entirely until then costs 0ms instead of a wasted request, which is what
+// actually makes repeated failures during a burst fast instead of slow.
+// In-process only — resets on restart, which is fine, it's a short-lived cache.
+const cooldowns = new Map();
 
+function providerKey(provider) {
+  return `${provider.type}:${provider.model || ''}`;
+}
+
+function isOnCooldown(provider) {
+  const until = cooldowns.get(providerKey(provider));
+  return until !== undefined && Date.now() < until;
+}
+
+function cooldownRemaining(provider) {
+  const until = cooldowns.get(providerKey(provider)) || 0;
+  return Math.max(0, until - Date.now());
+}
+
+// Parses "Please try again in 41.76s" / "...11.21s" / "...982.5ms" from Groq's
+// error body. Falls back to a fixed short cooldown if the message doesn't
+// match (other providers phrase 429s differently and don't give a hint).
+const DEFAULT_COOLDOWN_MS = 12_000;
+
+function setCooldownFromError(provider, errorText) {
+  let ms = DEFAULT_COOLDOWN_MS;
+  const match = errorText && errorText.match(/try again in ([\d.]+)\s*(ms|s)\b/i);
+  if (match) {
+    const value = parseFloat(match[1]);
+    ms = match[2].toLowerCase() === 'ms' ? value : value * 1000;
+    ms = Math.min(ms, 90_000); // sanity cap — never wait more than 90s on one model
+  }
+  cooldowns.set(providerKey(provider), Date.now() + ms);
+}
+
+async function handleErrorResponse(provider, response, label) {
+  const text = await response.text();
+  console.error(`${label} error (${response.status}):`, text);
+  if (response.status === 429) {
+    setCooldownFromError(provider, text);
+    console.log(`[${provider.name}] entering cooldown for ${(cooldownRemaining(provider) / 1000).toFixed(1)}s based on rate-limit response`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// PER-REQUEST TIMEOUT
+// ---------------------------------------------------------------------------
+// A live log showed a single OpenRouter call take ~15 seconds to respond,
+// with nothing bounding that wait. With up to several sequential attempts
+// before falling back to the question pool, one slow provider can
+// single-handedly make the whole chain feel "stuck." Capping each attempt
+// bounds the worst case to (providers x timeout) instead of being open-ended.
+const REQUEST_TIMEOUT_MS = 8_000;
+
+export async function callLLM(prompt, provider, count, consequenceMode) {
+  if (isOnCooldown(provider)) {
+    console.log(`[${provider.name}] skipping — still on cooldown for another ${(cooldownRemaining(provider) / 1000).toFixed(1)}s`);
+    return null;
+  }
+
+  const maxTokens = computeMaxTokens(count, consequenceMode);
+  const signal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+
+  try {
+    return await callLLMInner(prompt, provider, maxTokens, signal);
+  } catch (e) {
+    if (e.name === 'TimeoutError' || e.name === 'AbortError') {
+      console.error(`[${provider.name}] timed out after ${REQUEST_TIMEOUT_MS / 1000}s`);
+      return null;
+    }
+    throw e;
+  }
+}
+
+async function callLLMInner(prompt, provider, maxTokens, signal) {
   if (provider.type === 'groq') {
-    const r = await fetch('https://api.groq.com/openai/v1/chat/completions', { method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${provider.key}`}, body: JSON.stringify({ model: provider.model, messages:[{role:'user',content:prompt}], temperature:0.7, max_tokens: maxTokens }) });
-    if (!r.ok) { console.error(`Groq/${provider.model} error (${r.status}):`, await r.text()); return null; }
+    const r = await fetch('https://api.groq.com/openai/v1/chat/completions', { method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${provider.key}`}, body: JSON.stringify({ model: provider.model, messages:[{role:'user',content:prompt}], temperature:0.7, max_tokens: maxTokens }), signal });
+    if (!r.ok) { await handleErrorResponse(provider, r, `Groq/${provider.model}`); return null; }
     return (await r.json()).choices?.[0]?.message?.content || '';
   }
   if (provider.type === 'gemini') {
-    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${provider.key}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ contents:[{parts:[{text:prompt}]}], generationConfig:{temperature:0.7,maxOutputTokens:maxTokens} }) });
-    if (!r.ok) { console.error(`Gemini error (${r.status}):`, await r.text()); return null; }
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${provider.key}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ contents:[{parts:[{text:prompt}]}], generationConfig:{temperature:0.7,maxOutputTokens:maxTokens} }), signal });
+    if (!r.ok) { await handleErrorResponse(provider, r, 'Gemini'); return null; }
     return (await r.json()).candidates?.[0]?.content?.parts?.[0]?.text || '';
   }
   if (provider.type === 'mistral') {
     // "open-mistral-nemo" is on Mistral's free "Experiment" tier.
-    const r = await fetch('https://api.mistral.ai/v1/chat/completions', { method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${provider.key}`}, body: JSON.stringify({ model:'open-mistral-nemo', messages:[{role:'user',content:prompt}], temperature:0.7, max_tokens: maxTokens }) });
-    if (!r.ok) { console.error(`Mistral error (${r.status}):`, await r.text()); return null; }
+    const r = await fetch('https://api.mistral.ai/v1/chat/completions', { method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${provider.key}`}, body: JSON.stringify({ model:'open-mistral-nemo', messages:[{role:'user',content:prompt}], temperature:0.7, max_tokens: maxTokens }), signal });
+    if (!r.ok) { await handleErrorResponse(provider, r, 'Mistral'); return null; }
     return (await r.json()).choices?.[0]?.message?.content || '';
   }
   if (provider.type === 'openrouter') {
@@ -108,26 +200,24 @@ export async function callLLM(prompt, provider, count) {
         'X-Title': 'Swaruchi (HRRL)',
       },
       body: JSON.stringify({ model: 'openrouter/free', messages: [{ role: 'user', content: prompt }], temperature: 0.7, max_tokens: maxTokens }),
+      signal,
     });
-    if (!r.ok) { console.error(`OpenRouter error (${r.status}):`, await r.text()); return null; }
+    if (!r.ok) { await handleErrorResponse(provider, r, 'OpenRouter'); return null; }
     return (await r.json()).choices?.[0]?.message?.content || '';
   }
   if (provider.type === 'anthropic') {
-    const r = await fetch('https://api.anthropic.com/v1/messages', { method:'POST', headers:{'Content-Type':'application/json','x-api-key':provider.key,'anthropic-version':'2023-06-01'}, body: JSON.stringify({ model:'claude-sonnet-4-6', max_tokens: maxTokens, messages:[{role:'user',content:prompt}] }) });
-    if (!r.ok) { console.error(`Anthropic error (${r.status}):`, await r.text()); return null; }
+    const r = await fetch('https://api.anthropic.com/v1/messages', { method:'POST', headers:{'Content-Type':'application/json','x-api-key':provider.key,'anthropic-version':'2023-06-01'}, body: JSON.stringify({ model:'claude-sonnet-4-6', max_tokens: maxTokens, messages:[{role:'user',content:prompt}] }), signal });
+    if (!r.ok) { await handleErrorResponse(provider, r, 'Anthropic'); return null; }
     return (await r.json()).content?.[0]?.text || '';
   }
   if (provider.type === 'cerebras') {
-    const r = await fetch('https://api.cerebras.ai/v1/chat/completions', { method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${provider.key}`}, body: JSON.stringify({ model:'llama-3.3-70b', messages:[{role:'user',content:prompt}], temperature:0.7, max_tokens: maxTokens }) });
-    if (!r.ok) { console.error(`Cerebras error (${r.status}):`, await r.text()); return null; }
+    const r = await fetch('https://api.cerebras.ai/v1/chat/completions', { method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${provider.key}`}, body: JSON.stringify({ model:'llama-3.3-70b', messages:[{role:'user',content:prompt}], temperature:0.7, max_tokens: maxTokens }), signal });
+    if (!r.ok) { await handleErrorResponse(provider, r, 'Cerebras'); return null; }
     return (await r.json()).choices?.[0]?.message?.content || '';
   }
   return null;
 }
 
-// Tries every configured provider in order until one returns a usable JSON
-// array. Returns null only if every provider fails — callers decide their own
-// mock-question fallback.
 // Previews raw model output in logs on failure. Without this, "no JSON array
 // in response" gives no way to tell whether the model refused, returned
 // empty content, wrapped the array in markdown fences, or something else
@@ -174,11 +264,14 @@ export function extractQuestionArray(responseText, providerName) {
   return parsed;
 }
 
-export async function generateWithFailover(prompt, { count } = {}) {
+// Tries every configured provider in order until one returns a usable JSON
+// array. Returns null only if every provider fails — callers decide their own
+// mock-question fallback.
+export async function generateWithFailover(prompt, { count, consequenceMode } = {}) {
   const providers = getAllProviders();
   for (const provider of providers) {
     try {
-      const responseText = await callLLM(prompt, provider, count);
+      const responseText = await callLLM(prompt, provider, count, consequenceMode);
       const parsed = extractQuestionArray(responseText, provider.name);
       if (!parsed) continue;
       console.log(`[${provider.name}] generated ${parsed.length} items`);
