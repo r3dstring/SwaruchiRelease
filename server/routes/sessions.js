@@ -4,7 +4,7 @@ import { all, get, run } from '../db.js';
 import { authMiddleware, requireAdmin } from '../middleware/auth.js';
 import { chunkText } from '../retrieval.js';
 import { generateWithFailover } from '../aiProvider.js';
-import { processQuestions } from '../questionUtils.js';
+import { processQuestions, isAnswerCorrect } from '../questionUtils.js';
 import { ensureFallbackPool, getFromFallbackPool } from '../fallbackPool.js';
 import { buildParticipantView, stripAnswers } from '../participantShuffle.js';
 
@@ -312,9 +312,24 @@ router.post('/public/join', async (req, res) => {
     if (existing) {
       participantId = existing.id;
     } else {
-      const result = await run('INSERT INTO session_participants (session_id, name, employee_id, grade) VALUES (?, ?, ?, ?)',
-        [session.id, name.trim(), employee_id.trim(), grade.trim()]);
-      participantId = result.lastInsertRowid;
+      try {
+        const result = await run('INSERT INTO session_participants (session_id, name, employee_id, grade) VALUES (?, ?, ?, ?)',
+          [session.id, name.trim(), employee_id.trim(), grade.trim()]);
+        participantId = result.lastInsertRowid;
+      } catch (insertErr) {
+        // UNIQUE(session_id, employee_id) violation: a concurrent request for the
+        // same employee id won the race (double-click, or two tabs). That's not
+        // an error for the user — recover the row that did get created and carry
+        // on, rather than surfacing a 500.
+        if (insertErr && insertErr.code === '23505') {
+          const raced = await get('SELECT * FROM session_participants WHERE session_id = ? AND employee_id = ?', [session.id, employee_id.trim()]);
+          if (raced && raced.completed_at) return res.status(409).json({ error: 'This Employee ID has already completed this quiz' });
+          if (!raced) throw insertErr;
+          participantId = raced.id;
+        } else {
+          throw insertErr;
+        }
+      }
     }
 
     // Each participant gets their own question order and their own option
@@ -353,9 +368,7 @@ router.post('/public/submit', async (req, res) => {
     let score = 0;
     const total = questions.length;
     const results = questions.map((q, i) => {
-      const userAnswer = (answers[i] || '').toString().toLowerCase().trim();
-      const correctAnswer = (q.answer || '').toString().toLowerCase().trim();
-      const isCorrect = userAnswer === correctAnswer;
+      const isCorrect = isAnswerCorrect(q, answers[i]);
       if (isCorrect) score++;
       return { question: q.question, type: q.type, userAnswer: answers[i], correctAnswer: q.answer, explanation: q.explanation, isCorrect };
     });

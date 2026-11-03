@@ -4,7 +4,7 @@ import { all, get, run } from '../db.js';
 import { authMiddleware, requireAdmin } from '../middleware/auth.js';
 import { retrieveForTopic } from '../retrieval.js';
 import { getAllProviders, callLLM, extractQuestionArray } from '../aiProvider.js';
-import { processQuestions } from '../questionUtils.js';
+import { processQuestions, isAnswerCorrect } from '../questionUtils.js';
 import { ensureFallbackPool, getFromFallbackPoolMulti } from '../fallbackPool.js';
 
 // guardRouter: forwards async route rejections to the global error handler
@@ -320,13 +320,12 @@ router.post('/generate', authMiddleware, async (req, res) => {
 
 router.post('/submit', authMiddleware, async (req, res) => {
   const { questions, answers, topic, consequenceMode=false, docsReferenced=[] } = req.body;
-  if (!questions || !answers) return res.status(400).json({ error: 'Missing data' });
+  if (!Array.isArray(questions) || !Array.isArray(answers)) return res.status(400).json({ error: 'questions and answers must be arrays' });
+  if (questions.length === 0) return res.status(400).json({ error: 'No questions to submit' });
   let score = 0;
   const total = questions.length;
   const results = questions.map((q, i) => {
-    const ua = (answers[i]||'').toString().toLowerCase().trim();
-    const ca = (q.answer||'').toString().toLowerCase().trim();
-    const isCorrect = ua === ca;
+    const isCorrect = isAnswerCorrect(q, answers[i]);
     if (isCorrect) score++;
     return { ...q, userAnswer: answers[i], isCorrect };
   });

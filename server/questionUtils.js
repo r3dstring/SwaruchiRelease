@@ -176,6 +176,78 @@ export function deduplicate(questions, previousTexts = []) {
 }
 
 // ---------------------------------------------------------------------------
+// ANSWER CHECKING
+// ---------------------------------------------------------------------------
+// Scoring used to be a raw `userAnswer === correctAnswer` after lowercase+trim,
+// applied identically to every question type. For MCQ (letter) and T/F that is
+// correct. For fill-in-the-blank it is unfairly strict: a learner who types
+// "feed water" when the key says "feedwater", or "the desalter" for "desalter",
+// was marked wrong on a spelling/spacing/article difference rather than a
+// knowledge gap. In a training tool that silently penalises correct knowledge,
+// which is worse than the occasional miss.
+//
+// This centralises scoring for all three types so quiz.js and sessions.js stay
+// consistent, and makes ONLY fill-in-the-blank forgiving — and only in ways
+// that cannot turn a genuinely wrong answer into a right one:
+//   - case, surrounding punctuation/quotes and extra spaces are ignored
+//   - a leading article (a / an / the) is ignored
+//   - internal spaces and hyphens are ignored, so "feed water", "feed-water"
+//     and "feedwater" are treated as the same word
+// It does NOT do stemming, synonym, substring or acronym matching, since those
+// are what introduce false positives (e.g. accepting "valve" for "relief
+// valve"). Different words stay different.
+
+// Collapse a free-text answer to a comparable core. Returns '' if nothing is
+// left, which never matches another '' because we guard empties at the call site.
+function normalizeFreeText(value) {
+  let s = (value === undefined || value === null) ? '' : String(value);
+  s = s.toLowerCase().trim();
+  // strip surrounding quotes and trailing sentence punctuation
+  s = s.replace(/^['"`(\[]+/, '').replace(/['"`)\].,;:!?]+$/g, '').trim();
+  // drop a single leading article
+  s = s.replace(/^(?:a|an|the)\s+/, '');
+  s = s.replace(/\s+/g, ' ').trim();
+  return s;
+}
+
+// The strict form used for the final equality test: additionally remove spaces
+// and hyphens so spacing/hyphenation of a compound term doesn't matter.
+function compactFreeText(value) {
+  return normalizeFreeText(value).replace(/[\s-]+/g, '');
+}
+
+// Returns true if userAnswer should be scored correct for this question.
+// Type-aware: letters for MCQ, true/false for TF, forgiving text for FITB.
+export function isAnswerCorrect(question, userAnswer) {
+  if (!question) return false;
+  const type = question.type;
+  const correct = question.answer;
+
+  if (type === 'mcq') {
+    const u = (userAnswer === undefined || userAnswer === null) ? '' : String(userAnswer).toLowerCase().trim();
+    const c = (correct === undefined || correct === null) ? '' : String(correct).toLowerCase().trim();
+    return u !== '' && u === c;
+  }
+
+  if (type === 'tf') {
+    const norm = (v) => {
+      const s = (v === undefined || v === null) ? '' : String(v).toLowerCase().trim();
+      if (s === 't' || s === 'true' || s === 'yes') return 'true';
+      if (s === 'f' || s === 'false' || s === 'no') return 'false';
+      return s;
+    };
+    const u = norm(userAnswer);
+    return (u === 'true' || u === 'false') && u === norm(correct);
+  }
+
+  // fill-in-the-blank (and any other free-text type): forgiving comparison
+  const uCompact = compactFreeText(userAnswer);
+  const cCompact = compactFreeText(correct);
+  if (uCompact === '' || cCompact === '') return false;
+  return uCompact === cCompact;
+}
+
+// ---------------------------------------------------------------------------
 // PIPELINE
 // ---------------------------------------------------------------------------
 // One call that applies validation, shuffling and dedup in the right order.

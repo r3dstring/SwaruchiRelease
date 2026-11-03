@@ -5,6 +5,20 @@ import FlagButton from '../components/FlagButton';
 
 const DIFFICULTY_LABEL = { easy: 'Easy', medium: 'Medium', hard: 'Hard' };
 
+// Keep fill-in-the-blank feedback shown on screen in step with how the SERVER
+// scores it. The server (questionUtils.isAnswerCorrect) ignores case, a leading
+// article, and spacing/hyphenation of a compound term, so "feed water",
+// "feed-water" and "feedwater" all count. If the client kept using plain exact
+// match, the screen would flash "wrong" on an answer the server then scores
+// right. This must stay in sync with compactFreeText on the server.
+function compactAnswer(value) {
+  let s = (value === undefined || value === null) ? '' : String(value);
+  s = s.toLowerCase().trim();
+  s = s.replace(/^['"`([]+/, '').replace(/['"`)\].,;:!?]+$/g, '').trim();
+  s = s.replace(/^(?:a|an|the)\s+/, '');
+  return s.replace(/[\s-]+/g, '');
+}
+
 export default function Quiz({ settings, onFinish, onBack }) {
   const { count, difficulty, topic, consequenceMode, questionTypes } = settings;
   const [questions, setQuestions] = useState([]);
@@ -32,7 +46,10 @@ export default function Quiz({ settings, onFinish, onBack }) {
   const isCorrect = () => {
     if (!q) return false;
     const ans = q.answer?.toString().toLowerCase().trim();
-    if (q.type==='fitb') return fitbInput.toLowerCase().trim()===ans;
+    if (q.type==='fitb') {
+      const u = compactAnswer(fitbInput);
+      return u !== '' && u === compactAnswer(q.answer);
+    }
     return selected?.toString().toLowerCase().trim()===ans;
   };
 

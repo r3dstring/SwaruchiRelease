@@ -1,6 +1,6 @@
 import { all, get, run } from './db.js';
 import { generateWithFailover } from './aiProvider.js';
-import { processQuestions } from './questionUtils.js';
+import { processQuestions, deduplicate } from './questionUtils.js';
 import { getChunksForDoc } from './retrieval.js';
 
 const POOL_TARGET_SIZE = 18;
@@ -176,7 +176,16 @@ export async function getFromFallbackPoolMulti(pdfIds, count, opts = {}) {
     if (filtered.length > 0) collected.length = 0, collected.push(...filtered);
   }
 
-  const shuffled = [...collected];
+  // Drop questions the user has recently seen, so a prolonged outage doesn't
+  // replay the same pool questions attempt after attempt. Fall back to the
+  // full set if dedup would leave too few to fill the request.
+  let candidates = collected;
+  if (Array.isArray(opts.excludeTexts) && opts.excludeTexts.length > 0) {
+    const deduped = deduplicate(collected, opts.excludeTexts);
+    if (deduped.length >= Math.min(count, 3)) candidates = deduped;
+  }
+
+  const shuffled = [...candidates];
   for (let i = shuffled.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];

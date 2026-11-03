@@ -11,20 +11,40 @@ import sessionsRoutes from './routes/sessions.js';
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// CORS: allow local dev and the deployed frontend (set FRONTEND_URL on the host)
+// CORS: strict allowlist. The previous version had a permissive fallback
+// (cb(null, true) for ANY origin) left over from early testing, meaning any
+// website could make authenticated API calls against a stolen token. Given
+// HRRL's data-exposure requirements, there is no good reason for this API to
+// accept requests from an arbitrary origin, so the fallback is now a hard
+// rejection instead of a silent allow.
 const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost:4173',
 ];
 if (process.env.FRONTEND_URL) allowedOrigins.push(process.env.FRONTEND_URL);
+// Comma-separated list for supporting a second live host (e.g. during a
+// Netlify-to-Cloudflare migration) without code changes.
+if (process.env.ADDITIONAL_ALLOWED_ORIGINS) {
+  allowedOrigins.push(...process.env.ADDITIONAL_ALLOWED_ORIGINS.split(',').map(s => s.trim()).filter(Boolean));
+}
 
 app.use(cors({
   origin: (origin, cb) => {
-    // Allow requests with no origin (curl, mobile apps) and whitelisted origins
-    if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
-    // Also allow any *.netlify.app subdomain for preview deploys
-    if (/\.netlify\.app$/.test(new URL(origin).hostname)) return cb(null, true);
-    cb(null, true); // permissive fallback for testing; tighten for real production
+    // Requests with no Origin header (curl, server-to-server, the load test
+    // tool) are allowed — they can't carry a browser-stolen cookie/token the
+    // way a cross-site browser request could, so this isn't the exposure.
+    if (!origin) return cb(null, true);
+    if (allowedOrigins.includes(origin)) return cb(null, true);
+    // Any *.netlify.app or *.pages.dev subdomain — covers preview deploys on
+    // either host without hardcoding a specific project URL.
+    try {
+      const host = new URL(origin).hostname;
+      if (/\.netlify\.app$/.test(host) || /\.pages\.dev$/.test(host)) return cb(null, true);
+    } catch { /* malformed origin header — fall through to reject */ }
+    console.warn('CORS rejected origin:', origin);
+    const err = new Error('Not allowed by CORS');
+    err.status = 403;
+    cb(err);
   },
   credentials: true,
 }));
@@ -79,6 +99,12 @@ app.use((err, req, res, next) => {
       const providers = detectProviders();
       console.log(`\n  Swaruchi API (HRRL) running on port ${PORT}`);
       console.log(`  AI providers (failover order): ${providers.length ? providers.join(' -> ') : 'NONE (mock questions)'}`);
+      const withheld = ['GEMINI_API_KEY', 'MISTRAL_API_KEY', 'OPENROUTER_API_KEY']
+        .filter(k => process.env[k] && !(k === 'GEMINI_API_KEY' && process.env[k].startsWith('gsk_')))
+        .filter(() => process.env.ALLOW_TRAINING_DATA_PROVIDERS !== 'true');
+      if (withheld.length) {
+        console.log(`  NOTE: ${withheld.join(', ')} ${withheld.length > 1 ? 'are' : 'is'} configured but withheld — these providers train on submitted data on their free tier. Set ALLOW_TRAINING_DATA_PROVIDERS=true after InfoSec sign-off to enable.`);
+      }
       console.log(`  Admin: ${process.env.ADMIN_EMAIL || 'first signup becomes admin'}`);
       if (!providers.length) console.log(`  Set an AI key env var to enable real questions\n`);
       else console.log('');

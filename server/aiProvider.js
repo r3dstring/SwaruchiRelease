@@ -42,15 +42,42 @@ export function getAllProviders() {
     }
   }
 
-  // GEMINI_API_KEY is used for Gemini only when it does NOT look like a Groq
-  // key — this is unchanged from before, so a genuine Gemini key in this slot
-  // still works exactly as it always did.
-  if (process.env.GEMINI_API_KEY && !process.env.GEMINI_API_KEY.startsWith('gsk_')) {
-    providers.push({ name: 'Gemini', key: process.env.GEMINI_API_KEY, type: 'gemini' });
+  // DATA EXPOSURE GATE — read before changing this.
+  //
+  // Per each provider's own current published terms (reviewed Oct 2026):
+  //   - Gemini free tier: trains on submitted data outside UK/CH/EEA/EU.
+  //     India is not in that carve-out.
+  //   - OpenRouter free (":free") models: same "trains outside UK/CH/EEA/EU"
+  //     clause, AND OpenRouter routes to whichever underlying free model is
+  //     live, so the actual downstream processor is often unknowable.
+  //   - Mistral free ("Experiment") tier: training on submitted data is a
+  //     REQUIRED condition of free access, not a default you can decline.
+  //   - Groq: contractually prohibited from training on submitted data
+  //     regardless of tier (Services Agreement), with self-serve Zero Data
+  //     Retention available. This is why it stays the primary provider.
+  //   - Anthropic: API does not train on submitted data regardless of tier,
+  //     so it is not gated here.
+  //
+  // This app sends real document excerpts (equipment tags, setpoints, safety
+  // procedure text — up to ~7000 characters per call) as part of the prompt.
+  // Routing that to a provider that trains on it by default was happening
+  // silently. ALLOW_TRAINING_DATA_PROVIDERS=true makes that an explicit,
+  // auditable decision instead of an implicit one — flip it only after
+  // HRRL IT/InfoSec has signed off on sending document content to these
+  // specific providers under their current terms.
+  const allowTrainingProviders = process.env.ALLOW_TRAINING_DATA_PROVIDERS === 'true';
+
+  if (allowTrainingProviders) {
+    if (process.env.GEMINI_API_KEY && !process.env.GEMINI_API_KEY.startsWith('gsk_')) {
+      providers.push({ name: 'Gemini', key: process.env.GEMINI_API_KEY, type: 'gemini' });
+    }
+    if (process.env.MISTRAL_API_KEY) providers.push({ name: 'Mistral', key: process.env.MISTRAL_API_KEY, type: 'mistral' });
+    if (process.env.OPENROUTER_API_KEY) providers.push({ name: 'OpenRouter', key: process.env.OPENROUTER_API_KEY, type: 'openrouter' });
+  } else if (process.env.GEMINI_API_KEY || process.env.MISTRAL_API_KEY || process.env.OPENROUTER_API_KEY) {
+    // Keys are configured but withheld — log this once at startup (see
+    // index.js) so it's visible, not silently invisible.
   }
 
-  if (process.env.MISTRAL_API_KEY) providers.push({ name: 'Mistral', key: process.env.MISTRAL_API_KEY, type: 'mistral' });
-  if (process.env.OPENROUTER_API_KEY) providers.push({ name: 'OpenRouter', key: process.env.OPENROUTER_API_KEY, type: 'openrouter' });
   if (process.env.ANTHROPIC_API_KEY) providers.push({ name: 'Anthropic', key: process.env.ANTHROPIC_API_KEY, type: 'anthropic' });
 
   // Cerebras's no-card free tier is gone (now a paid $5 trial) — kept as an
@@ -222,11 +249,25 @@ async function callLLMInner(prompt, provider, maxTokens, signal) {
 // in response" gives no way to tell whether the model refused, returned
 // empty content, wrapped the array in markdown fences, or something else
 // entirely — exactly the gap that made an OpenRouter failure undiagnosable.
+// By default this logs a SHAPE summary only (length, first few words of
+// structure) rather than the actual content, since that content is derived
+// from real uploaded documents and Render's logs are third-party
+// infrastructure outside HRRL's control. Set DEBUG_LOG_AI_CONTENT=true on the
+// host temporarily when actively diagnosing a provider failure, same as was
+// done to debug the truncation and scenario-mode issues earlier - then unset
+// it again once the issue is resolved.
 export function preview(text, max = 300) {
   if (!text) return '(empty)';
   const t = text.trim();
   if (!t) return '(whitespace only)';
-  return t.length > max ? t.slice(0, max) + `... [${t.length} chars total]` : t;
+
+  if (process.env.DEBUG_LOG_AI_CONTENT === 'true') {
+    return t.length > max ? t.slice(0, max) + `... [${t.length} chars total]` : t;
+  }
+  // Default: length and a structural fingerprint only, no actual content.
+  const startsLikeJson = /^\s*[\[{]/.test(t);
+  const hasClosingBracket = /[\]}]\s*$/.test(t);
+  return `[${t.length} chars, ${startsLikeJson ? 'starts like JSON' : 'does not start like JSON'}, ${hasClosingBracket ? 'appears closed' : 'does not appear closed'}] (set DEBUG_LOG_AI_CONTENT=true to see content)`;
 }
 
 // Extracts and validates a JSON array of question objects from a model's raw
